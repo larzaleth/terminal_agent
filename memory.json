@@ -1,0 +1,118 @@
+[
+  {
+    "role": "user",
+    "parts": [
+      {
+        "text": "tampilkan isi package.json"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "functionCall": {
+          "name": "read_file",
+          "args": {
+            "path": "package.json"
+          }
+        },
+        "thoughtSignature": "CnoBvj72+8px3tKuMgeTReINj7iNXIdx/2ujk58xrJ9k1D1fJOD2BAWt9o502tFAGF8RawRMRv940LQarY1IJnLcdSpmWy2LvkjexQTzrRv/7Px2KWpuY9yMFnf3bkh67biauUvUH4J8nQbCtV3i8jfhXI4THAa9YAj86w=="
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "parts": [
+      {
+        "functionResponse": {
+          "name": "read_file",
+          "response": {
+            "result": "{\r\n  \"name\": \"ai-coding-agent\",\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"dependencies\": {\r\n    \"@google/genai\": \"^1.47.0\",\r\n    \"dotenv\": \"^17.3.1\",\r\n    \"fs\": \"^0.0.1-security\",\r\n    \"path\": \"^0.12.7\"\r\n  }\r\n}\r\n"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "text": "Isi dari `package.json` adalah sebagai berikut:\n\n"
+      },
+      {
+        "text": "```json\n{\n  \"name\": \"ai-coding-agent\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"@google/genai\": \"^1.47.0\",\n    \"dotenv\": \"^17.3.1\",\n    \"fs\": \"^0.0.1-security\",\n    \"path\": \"^0.12.7\"\n  }\n}\n```"
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "parts": [
+      {
+        "text": "apa saja isi folder ini?"
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "functionCall": {
+          "name": "run_command",
+          "args": {
+            "cmd": "ls -F"
+          }
+        },
+        "thoughtSignature": "Cm4Bvj72+15P3f3e5QctNcqfVkY0Dt0unphv5J3xPqt9GrKPGP1xjbp4tz6zQPYBePPxMlhYrhb800FFa2dA9Bot4EJDhNFnfVUqTCd6vSn3dPX4+OpdDoRoPHrvjcN5V7++PNGae8AhnLRjB8ebKA=="
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "parts": [
+      {
+        "functionResponse": {
+          "name": "run_command",
+          "response": {
+            "result": "Error: Command failed with exit code 1\nOutput: \nError: 'ls' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "functionCall": {
+          "name": "run_command",
+          "args": {
+            "cmd": "dir"
+          }
+        },
+        "thoughtSignature": "CpwBAb4+9vvBKQwwS3LlgedDdeqQlIFRFxFVrZPARlooJXj6Ro9RtPG3eSdv67emdk2NwjdcG22mEUhRcj0VzuddDLgfUqcTlELBJKsBIVM+DiBXTCFUe8mNAcqrbe40udFVHpEFN+wZtz3rq+CWe5FBRFNkBAGC50MsAUa2C/7euMHPhUS1EHl71xC7Y9FYYQUg5Pn5gfQuzqAbsUWC"
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "parts": [
+      {
+        "functionResponse": {
+          "name": "run_command",
+          "response": {
+            "result": " Volume in drive D is LOCAL SERVER\r\n Volume Serial Number is 0EA4-62A6\r\n\r\n Directory of D:\\node\\test_agent\\agent\r\n\r\n01/04/2026  00:02    <DIR>          .\r\n01/04/2026  00:02    <DIR>          ..\r\n31/03/2026  23:42                56 .env\r\n01/04/2026  00:13             3.036 agents.js\r\n01/04/2026  00:14               910 cli.js\r\n01/04/2026  00:00               923 index.js\r\n01/04/2026  00:13             1.110 llm.js\r\n01/04/2026  00:14               864 memory.js\r\n01/04/2026  00:15             1.415 memory.json\r\n31/03/2026  23:59    <DIR>          node_modules\r\n31/03/2026  23:59            20.662 package-lock.json\r\n31/03/2026  23:59               218 package.json\r\n01/04/2026  00:00             2.137 semantic.js\r\n01/04/2026  00:13             3.652 tools.js\r\n              11 File(s)         34.983 bytes\r\n               3 Dir(s)  30.419.423.232 bytes free\r\n"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "model",
+    "parts": [
+      {
+        "text": "Isi folder ini adalah:\n\n*   `.env`\n*   `agents.js`\n*   `cli.js`\n*   `index.js`\n*   `llm.js`\n*   `memory.js`\n*   `memory.json`\n*   `node_modules/` (direktori)\n*   `package-lock.json`\n*   `package.json`\n*   `semantic.js`\n*   `tools.js`"
+      }
+    ]
+  }
+]

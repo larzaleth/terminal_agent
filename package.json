@@ -1,0 +1,14 @@
+{
+  "name": "ai-coding-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "myagent": "./cli.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.47.0",
+    "dotenv": "^17.3.1",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7"
+  }
+}
