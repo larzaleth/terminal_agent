@@ -1,14 +1,13 @@
 import dotenv from "dotenv";
 import path from "path";
-import { fileURLToPath } from "url";
+import os from "os";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, ".env") });
+// Fallback load configuration from user's global ~/.myagent.env
+const globalEnvPath = path.join(os.homedir(), ".myagent.env");
+dotenv.config({ path: globalEnvPath });
 
 import { GoogleGenAI } from "@google/genai";
 
 export const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
-
