@@ -1,88 +1,180 @@
 import { ai } from "./llm.js";
 import { tools, toolDeclarations } from "./tools.js";
-import { loadMemory, addMemory, saveMemory } from "./memory.js";
+import { loadMemory, saveMemory } from "./memory.js";
+import { loadIndex, search, buildContext } from "./semantic.js";
+import { createPlan } from "./planner.js";
+import { config, getSystemPrompt } from "./config.js";
+import { retry, isReadOnlyTool } from "./utils.js";
 
-import { config } from "./config.js";
+const agentModel = config.model;
 
-const model = config.model;
-const systemInstruction = config.systemInstruction;
+/**
+ * Main agent loop with streaming, parallel tool execution, and retry logic.
+ *
+ * @param {string} userInput - The user's request
+ * @param {object} callbacks - Event callbacks for UI integration
+ * @param {function} callbacks.onPlan - Called with plan array
+ * @param {function} callbacks.onThinking - Called when LLM is processing
+ * @param {function} callbacks.onText - Called with streamed text chunks
+ * @param {function} callbacks.onToolCall - Called with (toolName, args)
+ * @param {function} callbacks.onToolResult - Called with (toolName, resultPreview)
+ * @param {function} callbacks.onDone - Called when agent finishes
+ * @param {function} callbacks.onError - Called with error
+ */
+export async function runAgent(userInput, callbacks = {}) {
+  const {
+    onPlan = () => {},
+    onThinking = () => {},
+    onText = (t) => process.stdout.write(t),
+    onToolCall = () => {},
+    onToolResult = () => {},
+    onDone = () => {},
+    onError = () => {},
+  } = callbacks;
 
-export async function runAgent(userInput) {
-  // Load previous memory (format: { role, parts })
   let memory = loadMemory();
+  const systemInstruction = getSystemPrompt();
 
-  // Add the user input
-  memory.push({ role: "user", parts: [{ text: userInput }] });
+  // ─── STEP 1: LLM-POWERED PLAN ───
+  onThinking();
+  let plan;
+  try {
+    plan = await createPlan(userInput);
+    onPlan(plan);
+  } catch {
+    plan = [{ step: "Process request", action: "respond" }];
+    onPlan(plan);
+  }
 
+  // ─── STEP 2: RAG CONTEXT SEARCH ───
+  let context = "";
+  try {
+    const index = loadIndex();
+    if (index.length > 0) {
+      const results = await search(userInput, index, { topK: 3, threshold: 0.7 });
+      context = buildContext(results);
+    }
+  } catch {
+    // RAG is optional, continue without context
+  }
+
+  // ─── STEP 3: INJECT USER MESSAGE WITH CONTEXT ───
+  const userMessage = context
+    ? `User request:\n${userInput}\n\nRelevant code context:\n${context}\n\nFollow existing code patterns strictly.`
+    : userInput;
+
+  memory.push({
+    role: "user",
+    parts: [{ text: userMessage }],
+  });
+
+  // ─── STEP 4: AGENT LOOP (STREAMING) ───
   let isDone = false;
   let finalResponse = "";
+  let iterations = 0;
+  const maxIterations = config.maxIterations || 25;
 
-  while (!isDone) {
+  while (!isDone && iterations < maxIterations) {
+    iterations++;
+    onThinking();
+
+    let streamedText = "";
+    const functionCalls = [];
+
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: memory,
-        config: {
-          systemInstruction,
-          tools: [{ functionDeclarations: toolDeclarations }],
-        },
-      });
+      // 🔥 STREAMING: generateContentStream for real-time output
+      const stream = await retry(() =>
+        ai.models.generateContentStream({
+          model: agentModel,
+          contents: memory,
+          config: {
+            systemInstruction,
+            tools: [{ functionDeclarations: toolDeclarations }],
+          },
+        })
+      );
 
-      const messageContent = response.candidates?.[0]?.content;
-      if (!messageContent) {
-        finalResponse += "\n(No response from model)";
-        break;
-      }
-
-      const parts = messageContent.parts || [];
-      // Model responded, save it to memory
-      memory.push({ role: "model", parts });
-
-      let toolCallsPromises = [];
-
-      for (const part of parts) {
-        if (part.text) {
-          finalResponse += part.text + "\n";
-          console.log(`\n🤖 > ${part.text}`); // print text as it happens
-        }
-        
-        if (part.functionCall) {
-          const { name, args } = part.functionCall;
-          const handler = tools[name];
-          if (handler) {
-            toolCallsPromises.push((async () => {
-              const result = await handler(args);
-              return {
-                functionResponse: {
-                  name,
-                  response: { result },
-                },
-              };
-            })());
+      // Process stream chunks in real-time
+      for await (const chunk of stream) {
+        const parts = chunk.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+          if (part.text) {
+            streamedText += part.text;
+            onText(part.text);
+          }
+          if (part.functionCall) {
+            functionCalls.push(part);
           }
         }
       }
-
-      if (toolCallsPromises.length > 0) {
-        // Model called tools, let's process them and loop again
-        const toolResponsesParts = await Promise.all(toolCallsPromises);
-        
-        // Push tool results back to memory as user role
-        memory.push({ role: "user", parts: toolResponsesParts });
-        // Loop continues so model can respond to tool outputs
-      } else {
-        // No more tool calls, we are completely done
-        isDone = true;
-      }
     } catch (err) {
-      console.error("\n❌ Agent Error:", err.message);
+      onError(err);
+      break;
+    }
+
+    // Build model message for memory
+    const modelParts = [];
+    if (streamedText) modelParts.push({ text: streamedText });
+    modelParts.push(...functionCalls);
+
+    if (modelParts.length === 0) break;
+    memory.push({ role: "model", parts: modelParts });
+    finalResponse += streamedText;
+
+    // ─── EXECUTE TOOL CALLS ───
+    if (functionCalls.length > 0) {
+      const responses = [];
+
+      // Separate read-only (parallel) vs write (sequential)
+      const readCalls = functionCalls.filter((fc) => isReadOnlyTool(fc.functionCall.name));
+      const writeCalls = functionCalls.filter((fc) => !isReadOnlyTool(fc.functionCall.name));
+
+      // ⚡ Execute read-only tools in PARALLEL
+      if (readCalls.length > 0) {
+        const readResults = await Promise.all(
+          readCalls.map(async (fc) => {
+            const { name, args } = fc.functionCall;
+            onToolCall(name, args);
+            const handler = tools[name];
+            if (!handler) return { functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } };
+            const result = await handler(args);
+            onToolResult(name, typeof result === "string" ? result.slice(0, 100) : "done");
+            return { functionResponse: { name, response: { result } } };
+          })
+        );
+        responses.push(...readResults);
+      }
+
+      // 🔒 Execute write tools SEQUENTIALLY
+      for (const fc of writeCalls) {
+        const { name, args } = fc.functionCall;
+        onToolCall(name, args);
+        const handler = tools[name];
+        if (!handler) {
+          responses.push({ functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } });
+          continue;
+        }
+        const result = await handler(args);
+        onToolResult(name, typeof result === "string" ? result.slice(0, 100) : "done");
+        responses.push({ functionResponse: { name, response: { result } } });
+      }
+
+      memory.push({ role: "user", parts: responses });
+    } else {
       isDone = true;
-      finalResponse += "\n[Error executing step: " + err.message + "]";
     }
   }
 
-  // Save the full memory context
-  saveMemory(memory);
-  
+  if (iterations >= maxIterations) {
+    const msg = "\n⚠️ Max iterations reached. Stopping agent loop.\n";
+    onText(msg);
+    finalResponse += msg;
+  }
+
+  onDone();
+
+  // Save memory (async - with LLM summarization if needed)
+  await saveMemory(memory);
+
   return finalResponse;
 }

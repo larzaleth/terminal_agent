@@ -4,80 +4,185 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import dotenv from "dotenv";
+import chalk from "chalk";
+import ora from "ora";
+import { formatDuration } from "./utils.js";
 
+// ===========================
+// 🔑 API KEY SETUP
+// ===========================
 async function setupApiKey() {
   const globalEnvPath = path.join(os.homedir(), ".myagent.env");
-  
-  // Load existing .myagent.env if present
   dotenv.config({ path: globalEnvPath });
-  
+
   if (!process.env.GEMINI_API_KEY) {
-    console.log("👋 Selamat datang di AI Coding Agent!");
-    console.log("Sepertinya Anda belum mengatur Gemini API Key di komputer ini.\n");
-    
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    
-    const key = await rl.question("🔑 Masukkan Gemini API Key (dapatkan di https://aistudio.google.com): ");
+    console.log(chalk.cyan.bold("\n👋 Welcome to AI Coding Agent!\n"));
+    console.log(chalk.dim("Looks like you haven't set up your Gemini API Key yet.\n"));
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const key = await rl.question(chalk.yellow("🔑 Enter Gemini API Key (get it at https://aistudio.google.com): "));
     rl.close();
-    
+
     if (!key.trim()) {
-      console.error("❌ API Key tidak boleh kosong!");
+      console.error(chalk.red("❌ API Key cannot be empty!"));
       process.exit(1);
     }
-    
-    // Save to global file
+
     fs.writeFileSync(globalEnvPath, `GEMINI_API_KEY=${key.trim()}\n`);
-    console.log(`\n✅ API Key berhasil disimpan secara aman di ${globalEnvPath}\n`);
-    
-    // Set for current process
+    console.log(chalk.green(`\n✅ API Key saved to ${globalEnvPath}\n`));
     process.env.GEMINI_API_KEY = key.trim();
   }
 }
 
+// ===========================
+// 🎨 BANNER
+// ===========================
+function showBanner() {
+  console.log(chalk.cyan.bold(`
+╔══════════════════════════════════════╗
+║     🤖 AI Coding Agent v2.0        ║
+║     Powered by Gemini               ║
+╚══════════════════════════════════════╝`));
+  console.log(chalk.dim("  Type your request, or use commands:"));
+  console.log(chalk.dim("  /help  /clear  /index <folder>  /config  exit\n"));
+}
+
+// ===========================
+// 📋 SLASH COMMANDS
+// ===========================
+async function handleSlashCommand(input, modules) {
+  const [cmd, ...args] = input.trim().split(" ");
+
+  switch (cmd) {
+    case "/help":
+      console.log(chalk.cyan(`
+📋 Available Commands:
+  ${chalk.white("/help")}            Show this help
+  ${chalk.white("/clear")}           Clear conversation memory
+  ${chalk.white("/index <folder>")}  Build semantic index for a folder
+  ${chalk.white("/config")}          Show current configuration
+  ${chalk.white("exit / quit")}      Exit the agent
+`));
+      return true;
+
+    case "/clear": {
+      const { clearMemory } = await import("./memory.js");
+      clearMemory();
+      console.log(chalk.green("✅ Memory cleared.\n"));
+      return true;
+    }
+
+    case "/index": {
+      const folder = args[0];
+      if (!folder) {
+        console.log(chalk.red("❌ Usage: /index <folder>"));
+        return true;
+      }
+      const spinner = ora("Building semantic index...").start();
+      try {
+        const { buildIndex } = await import("./semantic.js");
+        await buildIndex(folder);
+        spinner.succeed(chalk.green("Index built successfully."));
+      } catch (err) {
+        spinner.fail(chalk.red(`Index failed: ${err.message}`));
+      }
+      return true;
+    }
+
+    case "/config": {
+      const { config } = await import("./config.js");
+      console.log(chalk.cyan("\n⚙️ Current Configuration:"));
+      console.log(chalk.white(JSON.stringify(config, null, 2)));
+      console.log(chalk.dim("\nEdit agent.config.json to customize.\n"));
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+// ===========================
+// 🚀 MAIN
+// ===========================
 async function main() {
-  // Ensure Key exists before we even initialize LLM clients
   await setupApiKey();
-  
-  // Dynamic import AFTER API Key is guaranteed to exist
+
   const { runAgent } = await import("./agents.js");
 
-  console.log("🤖 Coding Agent Ready!");
-  console.log("Ketik 'exit' untuk keluar\n");
+  showBanner();
 
-  const ask = async () => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    
-    const input = await rl.question("🧑 > ");
+  const prompt = async () => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const input = await rl.question(chalk.green.bold("🧑 > "));
     rl.close();
-    
-    if (input.trim() === "exit" || input.trim() === "quit") {
+
+    const trimmed = input.trim();
+    if (!trimmed) return prompt();
+    if (trimmed === "exit" || trimmed === "quit") {
+      console.log(chalk.dim("\n👋 Goodbye!\n"));
       process.exit(0);
-      return;
     }
+
+    // Handle slash commands
+    if (trimmed.startsWith("/")) {
+      const handled = await handleSlashCommand(trimmed);
+      if (handled) return prompt();
+    }
+
+    const spinner = ora({ text: chalk.dim("Thinking..."), spinner: "dots" });
+    const startTime = Date.now();
 
     try {
-      // Tampilkan indikator proses
-      const startTime = Date.now();
-      
-      const res = await runAgent(input);
-      
-      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`\n🤖 Selesai dalam ${duration}s`);
+      await runAgent(trimmed, {
+        onPlan: (plan) => {
+          spinner.stop();
+          console.log(chalk.magenta.bold("\n📋 PLAN:"));
+          plan.forEach((p, i) => {
+            console.log(chalk.magenta(`  ${i + 1}. ${p.step}`));
+          });
+          console.log("");
+        },
+
+        onThinking: () => {
+          spinner.start(chalk.dim("Thinking..."));
+        },
+
+        onText: (text) => {
+          spinner.stop();
+          process.stdout.write(chalk.cyan(text));
+        },
+
+        onToolCall: (name, args) => {
+          spinner.stop();
+          const argSummary = args ? Object.values(args).map((v) => String(v).slice(0, 50)).join(", ") : "";
+          console.log(chalk.yellow(`\n🔧 ${name}(${argSummary})`));
+        },
+
+        onToolResult: (name, preview) => {
+          // Tool handlers already log their own output
+        },
+
+        onDone: () => {
+          spinner.stop();
+        },
+
+        onError: (err) => {
+          spinner.fail(chalk.red(`Error: ${err.message}`));
+        },
+      });
+
+      const duration = formatDuration(Date.now() - startTime);
+      console.log(chalk.dim(`\n\n⏱️ Done in ${duration}\n`));
     } catch (err) {
-      console.error("\n❌ Error CLI:", err.message, "\n");
+      spinner.stop();
+      console.error(chalk.red(`\n❌ Error: ${err.message}\n`));
     }
 
-    // Rekursif ke prompt selanjutnya
-    ask();
+    prompt();
   };
 
-  ask();
+  prompt();
 }
 
 main();

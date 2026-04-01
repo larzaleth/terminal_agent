@@ -1,28 +1,113 @@
 import fs from "fs";
+import { ai } from "./llm.js";
+import { config } from "./config.js";
 
 const MEMORY_FILE = "memory.json";
 
+// ===========================
+// 🔹 LOAD
+// ===========================
 export function loadMemory() {
   if (!fs.existsSync(MEMORY_FILE)) return [];
-  return JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8"));
+  try {
+    const data = fs.readFileSync(MEMORY_FILE, "utf-8");
+    if (!data.trim()) return [];
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
 }
 
-export function saveMemory(memory) {
-  // Save memory context. For a robust production agent, we would need 
-  // careful summarization or pair-aware truncation.
-  
-  // Limit memory length if it gets absurdly long
-  if (memory.length > 50) {
-    // Slice off older context. Important: we must ensure we don't break functionCall / functionResponse pairs,
-    // so just keep the last 30 turns.
-    memory = memory.slice(-30);
+// ===========================
+// 🔹 SAVE (SMART TRUNCATE)
+// ===========================
+export async function saveMemory(memory) {
+  const maxTurns = config.maxMemoryTurns || 20;
+
+  if (memory.length > maxTurns) {
+    memory = await summarizeMemory(memory);
   }
-  
+
   fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
 }
 
-// Deprecated since agents.js manages array directly in the ReAct loop
-export function addMemory(memory, message) {
-  memory.push(message);
-  saveMemory(memory);
+// ===========================
+// 🔹 CLEAR
+// ===========================
+export function clearMemory() {
+  fs.writeFileSync(MEMORY_FILE, "[]");
+}
+
+// ===========================
+// 🔥 LLM-POWERED SUMMARIZATION
+// ===========================
+async function summarizeMemory(memory) {
+  const recentCount = 10;
+  const oldMessages = memory.slice(0, -recentCount);
+  const recentMessages = memory.slice(-recentCount);
+
+  // Extract text-only content from old messages for summarization
+  const textParts = oldMessages
+    .map((msg) => {
+      const role = msg.role || "unknown";
+      const texts = (msg.parts || [])
+        .filter((p) => p.text)
+        .map((p) => p.text)
+        .join("\n");
+      return texts ? `[${role}]: ${texts}` : null;
+    })
+    .filter(Boolean)
+    .join("\n---\n");
+
+  if (!textParts.trim()) {
+    return [
+      {
+        role: "user",
+        parts: [{ text: "[CONTEXT] Previous conversation history was cleared to save memory." }],
+      },
+      ...recentMessages,
+    ];
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: config.summaryModel,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `Summarize this conversation history into a concise context paragraph.
+Focus on: what was discussed, what files were modified, what decisions were made, and any important patterns or conventions discovered.
+
+Conversation:
+${textParts.slice(0, 4000)}
+
+Respond with ONLY the summary paragraph, no extra formatting.`,
+            },
+          ],
+        },
+      ],
+      config: { temperature: 0.1 },
+    });
+
+    const summaryText = response?.candidates?.[0]?.content?.parts?.[0]?.text || "Previous conversation context was summarized.";
+
+    return [
+      {
+        role: "user",
+        parts: [{ text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }],
+      },
+      ...recentMessages,
+    ];
+  } catch (err) {
+    console.log(`⚠️ Memory summarization fallback: ${err.message}`);
+    return [
+      {
+        role: "user",
+        parts: [{ text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }],
+      },
+      ...recentMessages,
+    ];
+  }
 }
