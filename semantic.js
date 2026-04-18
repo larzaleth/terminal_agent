@@ -1,18 +1,38 @@
 import fs from "fs";
 import path from "path";
 import { ai } from "./llm.js";
+import { getCachedResponse, setCachedResponse } from "./cache.js";
+import { globalTracker } from "./cost-tracker.js";
 
 const INDEX_FILE = "index.json";
+const EMBEDDING_MODEL = "text-embedding-004";
 
 // ===========================
-// 🔹 EMBEDDING
+// 🔹 EMBEDDING (WITH CACHE & COST TRACKING)
 // ===========================
 export async function embed(text) {
+  // Check cache first
+  const cached = getCachedResponse(text, EMBEDDING_MODEL);
+  if (cached) {
+    globalTracker.trackEmbedding(text, true); // Track cache hit
+    return cached;
+  }
+
+  // If not cached, get from API
   const res = await ai.models.embedContent({
-    model: "text-embedding-004",
+    model: EMBEDDING_MODEL,
     contents: text,
   });
-  return res.embedding.values;
+  
+  const embedding = res.embedding.values;
+  
+  // Cache the result
+  setCachedResponse(text, EMBEDDING_MODEL, embedding);
+  
+  // Track cost
+  globalTracker.trackEmbedding(text, false); // Track cache miss
+  
+  return embedding;
 }
 
 // ===========================
@@ -78,31 +98,56 @@ function getAllFiles(dir, ext = [".js", ".ts", ".json", ".jsx", ".tsx", ".mjs"])
 }
 
 // ===========================
-// 🔥 BUILD INDEX
+// 🔥 BUILD INDEX (WITH BATCH EMBEDDINGS)
 // ===========================
 export async function buildIndex(folderPath) {
   const files = getAllFiles(folderPath);
   const index = [];
+  const BATCH_SIZE = 10; // Process 10 chunks at once for better performance
+
+  console.log(`🚀 Starting batch indexing for ${files.length} files...`);
+  const startTime = Date.now();
 
   for (const file of files) {
-    const content = fs.readFileSync(file, "utf-8");
-    const chunks = chunkText(content);
+    try {
+      const content = fs.readFileSync(file, "utf-8");
+      const chunks = chunkText(content);
 
-    console.log("📄 Indexing:", file);
+      console.log(`📄 Indexing: ${file} (${chunks.length} chunks)`);
 
-    for (const chunk of chunks) {
-      const vector = await embed(chunk);
-      index.push({
-        file,
-        content: chunk,
-        embedding: vector,
-        type: detectType(file),
-      });
+      // 🔥 BATCH PROCESSING: Process multiple chunks in parallel
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        
+        // Embed all chunks in batch simultaneously
+        const vectors = await Promise.all(
+          batch.map(chunk => embed(chunk).catch(err => {
+            console.warn(`⚠️ Embedding failed for chunk in ${file}: ${err.message}`);
+            return null;
+          }))
+        );
+
+        // Add successful embeddings to index
+        batch.forEach((chunk, idx) => {
+          if (vectors[idx]) {
+            index.push({
+              file,
+              content: chunk,
+              embedding: vectors[idx],
+              type: detectType(file),
+            });
+          }
+        });
+      }
+    } catch (err) {
+      console.error(`❌ Failed to index ${file}: ${err.message}`);
     }
   }
 
   fs.writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
-  console.log("✅ Index saved");
+  
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  console.log(`✅ Index saved with ${index.length} embeddings in ${duration}s`);
 }
 
 // ===========================

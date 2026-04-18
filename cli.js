@@ -61,6 +61,8 @@ async function handleSlashCommand(input, modules) {
   ${chalk.white("/clear")}           Clear conversation memory
   ${chalk.white("/index <folder>")}  Build semantic index for a folder
   ${chalk.white("/config")}          Show current configuration
+  ${chalk.white("/cache")}           Cache management (stats/clear/clean)
+  ${chalk.white("/cost")}            Cost tracking (report/history/reset)
   ${chalk.white("exit / quit")}      Exit the agent
 `));
       return true;
@@ -94,6 +96,57 @@ async function handleSlashCommand(input, modules) {
       console.log(chalk.cyan("\n⚙️ Current Configuration:"));
       console.log(chalk.white(JSON.stringify(config, null, 2)));
       console.log(chalk.dim("\nEdit agent.config.json to customize.\n"));
+      return true;
+    }
+
+    case "/cache": {
+      const subCmd = args[0];
+      const { getCacheStats, clearCache, cleanExpiredCache } = await import("./cache.js");
+
+      if (subCmd === "stats") {
+        const stats = getCacheStats();
+        console.log(chalk.cyan("\n💾 Cache Statistics:"));
+        console.log(chalk.white(`  Total Items: ${stats.totalItems}`));
+        console.log(chalk.green(`  Valid Items: ${stats.validItems}`));
+        console.log(chalk.yellow(`  Expired Items: ${stats.expiredItems}`));
+        console.log(chalk.white(`  Total Size: ${stats.totalSizeKB} KB`));
+        console.log(chalk.dim(`  TTL: ${stats.ttlHours} hour(s)\n`));
+      } else if (subCmd === "clear") {
+        clearCache();
+      } else if (subCmd === "clean") {
+        cleanExpiredCache();
+      } else {
+        console.log(chalk.yellow(`
+💾 Cache Commands:
+  ${chalk.white("/cache stats")}   Show cache statistics
+  ${chalk.white("/cache clear")}   Clear all cached data
+  ${chalk.white("/cache clean")}   Remove expired cache entries
+`));
+      }
+      return true;
+    }
+
+    case "/cost": {
+      const subCmd = args[0];
+      const { globalTracker, viewCostHistory } = await import("./cost-tracker.js");
+      const { config } = await import("./config.js");
+
+      if (subCmd === "report") {
+        globalTracker.displayReport(config.model);
+      } else if (subCmd === "history") {
+        const limit = parseInt(args[1]) || 10;
+        viewCostHistory(limit);
+      } else if (subCmd === "reset") {
+        globalTracker.reset();
+        console.log(chalk.green("✅ Cost tracker reset.\n"));
+      } else {
+        console.log(chalk.yellow(`
+💰 Cost Tracking Commands:
+  ${chalk.white("/cost report")}        Show current session cost report
+  ${chalk.white("/cost history [n]")}   Show last n sessions (default: 10)
+  ${chalk.white("/cost reset")}         Reset current session tracker
+`));
+      }
       return true;
     }
 
@@ -173,7 +226,14 @@ async function main() {
       });
 
       const duration = formatDuration(Date.now() - startTime);
-      console.log(chalk.dim(`\n\n⏱️ Done in ${duration}\n`));
+      
+      // Show cost summary
+      const { globalTracker } = await import("./cost-tracker.js");
+      const { config } = await import("./config.js");
+      const costSummary = globalTracker.getQuickSummary(config.model);
+      
+      console.log(chalk.dim(`\n⏱️  Done in ${duration}`));
+      console.log(chalk.dim(`${costSummary}\n`));
     } catch (err) {
       spinner.stop();
       console.error(chalk.red(`\n❌ Error: ${err.message}\n`));

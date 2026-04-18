@@ -5,6 +5,7 @@ import { loadIndex, search, buildContext } from "./semantic.js";
 import { createPlan } from "./planner.js";
 import { config, getSystemPrompt } from "./config.js";
 import { retry, isReadOnlyTool } from "./utils.js";
+import { globalTracker } from "./cost-tracker.js";
 
 const agentModel = config.model;
 
@@ -112,6 +113,12 @@ export async function runAgent(userInput, callbacks = {}) {
       break;
     }
 
+    // Track generation cost
+    const inputText = memory.map(m => 
+      m.parts?.map(p => p.text || "").join("") || ""
+    ).join(" ");
+    globalTracker.trackGeneration(agentModel, inputText, streamedText);
+
     // Build model message for memory
     const modelParts = [];
     if (streamedText) modelParts.push({ text: streamedText });
@@ -175,6 +182,9 @@ export async function runAgent(userInput, callbacks = {}) {
 
   // Save memory (async - with LLM summarization if needed)
   await saveMemory(memory);
+
+  // Save cost report to history
+  globalTracker.saveToFile(agentModel);
 
   return finalResponse;
 }
