@@ -27,7 +27,7 @@ export async function runAgent(userInput, callbacks = {}) {
   } = callbacks;
 
   const agentModel = config.model;
-  let memory = loadMemory();
+  const memory = loadMemory();
   const systemInstruction = getSystemPrompt();
 
   // ─── STEP 1: LLM-POWERED PLAN (auto-skipped for short requests) ───

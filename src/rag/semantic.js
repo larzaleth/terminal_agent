@@ -1,4 +1,5 @@
-import fs from "fs";
+import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import pLimit from "p-limit";
 import { ai } from "../llm/llm.js";
@@ -28,15 +29,10 @@ export async function embed(text) {
     return cached;
   }
 
-  const res = await ai.models.embedContent({
-    model: EMBEDDING_MODEL,
-    contents: text,
-  });
-
+  const res = await ai.models.embedContent({ model: EMBEDDING_MODEL, contents: text });
   const embedding = res.embedding.values;
   setCachedResponse(text, EMBEDDING_MODEL, embedding);
   globalTracker.trackEmbedding(text, false);
-
   return embedding;
 }
 
@@ -49,7 +45,6 @@ function magnitude(v) {
   return Math.sqrt(sum);
 }
 
-// Pre-normalize once at index time → query becomes plain dot-product.
 function normalize(v) {
   const mag = magnitude(v);
   if (mag === 0) return v;
@@ -58,7 +53,6 @@ function normalize(v) {
   return out;
 }
 
-// Both vectors expected pre-normalized → just dot product.
 function dotProduct(a, b) {
   let sum = 0;
   const n = Math.min(a.length, b.length);
@@ -67,10 +61,8 @@ function dotProduct(a, b) {
 }
 
 // ===========================
-// 🔹 SMART CHUNKING (line-based with overlap)
+// 🔹 SMART CHUNKING
 // ===========================
-// Previous implementation sliced by raw characters which cut mid-token and
-// destroyed code semantics. We now chunk by logical lines to preserve context.
 export function chunkText(text, { maxLines = CHUNK_MAX_LINES, overlap = CHUNK_OVERLAP_LINES } = {}) {
   if (!text) return [];
   const lines = text.split("\n");
@@ -102,29 +94,35 @@ function detectType(file) {
   return "general";
 }
 
-function getAllFiles(dir, exts = CODE_EXTS) {
-  let results = [];
+// Async recursive walker — non-blocking for large repos.
+async function getAllFiles(dir, exts = CODE_EXTS) {
+  const results = [];
+  let entries;
   try {
-    const list = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of list) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
-          results = results.concat(getAllFiles(full, exts));
-        }
-      } else if (exts.includes(path.extname(entry.name))) {
-        results.push(full);
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
+        const sub = await getAllFiles(full, exts);
+        results.push(...sub);
       }
+    } else if (exts.includes(path.extname(entry.name))) {
+      results.push(full);
     }
-  } catch { /* skip inaccessible */ }
+  }
   return results;
 }
 
 // ===========================
-// 🔥 BUILD INDEX (batched + concurrency-limited)
+// 🔥 BUILD INDEX (async fs + concurrency-limited embedding)
 // ===========================
 export async function buildIndex(folderPath) {
-  const files = getAllFiles(folderPath);
+  const files = await getAllFiles(folderPath);
   const index = [];
   const limit = pLimit(EMBEDDING_CONCURRENCY);
 
@@ -133,7 +131,7 @@ export async function buildIndex(folderPath) {
 
   for (const file of files) {
     try {
-      const content = fs.readFileSync(file, "utf-8");
+      const content = await fs.readFile(file, "utf-8");
       const chunks = chunkText(content);
       if (chunks.length === 0) continue;
 
@@ -142,10 +140,14 @@ export async function buildIndex(folderPath) {
       for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
         const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
         const vectors = await Promise.all(
-          batch.map((chunk) => limit(() => embed(chunk).catch((err) => {
-            console.warn(`⚠️ Embedding failed for chunk in ${file}: ${err.message}`);
-            return null;
-          })))
+          batch.map((chunk) =>
+            limit(() =>
+              embed(chunk).catch((err) => {
+                console.warn(`⚠️ Embedding failed for chunk in ${file}: ${err.message}`);
+                return null;
+              })
+            )
+          )
         );
 
         batch.forEach((chunk, idx) => {
@@ -164,26 +166,27 @@ export async function buildIndex(folderPath) {
     }
   }
 
-  // Minified JSON — embedding arrays are large; indentation wastes 5-10x space.
-  fs.writeFileSync(INDEX_FILE, JSON.stringify(index));
+  await fs.writeFile(INDEX_FILE, JSON.stringify(index));
 
-  _indexCache = { mtime: fs.statSync(INDEX_FILE).mtimeMs, data: index };
+  // Refresh in-memory cache so subsequent loadIndex() calls skip the disk read.
+  const stat = await fs.stat(INDEX_FILE);
+  _indexCache = { mtime: stat.mtimeMs, data: index };
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
   console.log(`✅ Index saved with ${index.length} embeddings in ${duration}s`);
 }
 
 // ===========================
-// 🔹 LOAD INDEX (in-memory cache with mtime invalidation)
+// 🔹 LOAD INDEX (sync is fine — called once per session, small JSON mostly)
 // ===========================
 let _indexCache = null;
 
 export function loadIndex() {
-  if (!fs.existsSync(INDEX_FILE)) return [];
+  if (!fsSync.existsSync(INDEX_FILE)) return [];
   try {
-    const mtime = fs.statSync(INDEX_FILE).mtimeMs;
+    const mtime = fsSync.statSync(INDEX_FILE).mtimeMs;
     if (_indexCache && _indexCache.mtime === mtime) return _indexCache.data;
-    const data = JSON.parse(fs.readFileSync(INDEX_FILE, "utf-8"));
+    const data = JSON.parse(fsSync.readFileSync(INDEX_FILE, "utf-8"));
     _indexCache = { mtime, data };
     return data;
   } catch {
@@ -192,7 +195,7 @@ export function loadIndex() {
 }
 
 // ===========================
-// 🔹 SEARCH (dot product — embeddings pre-normalized)
+// 🔹 SEARCH
 // ===========================
 export async function search(query, index, options = {}) {
   const { topK = RAG_TOP_K, threshold = RAG_THRESHOLD } = options;

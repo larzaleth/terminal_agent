@@ -62,8 +62,9 @@ export class CostTracker {
       outputTokens =
         inputOrMeta.candidatesTokenCount ??
         inputOrMeta.outputTokens ??
-        inputOrMeta.totalTokenCount - inputTokens ??
-        0;
+        (typeof inputOrMeta.totalTokenCount === "number"
+          ? Math.max(0, inputOrMeta.totalTokenCount - inputTokens)
+          : 0);
     } else {
       inputTokens = estimateTokens(inputOrMeta);
       outputTokens = estimateTokens(outputText);

@@ -1,0 +1,8 @@
+node_modules/
+.agent_cache/
+index.json
+memory.json
+cost-report.json
+*.log
+yarn.lock
+package-lock.json

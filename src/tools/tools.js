@@ -1,49 +1,67 @@
-import fs from "fs";
+import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
-import { execSync } from "child_process";
+import { spawn } from "child_process";
 import readline from "readline/promises";
 import { truncate, isSafePath } from "../utils/utils.js";
+import { classifyCommand } from "./command-classifier.js";
 import {
   IGNORE_DIRS,
   BINARY_EXTS,
   MAX_TOOL_OUTPUT_CHARS,
   MAX_COMMAND_OUTPUT_CHARS,
   COMMAND_TIMEOUT_MS,
-  COMMAND_MAX_BUFFER,
 } from "../config/constants.js";
 
 // ===========================
 // 🔹 HELPERS
 // ===========================
-async function confirmExecution(cmd) {
+async function confirmExecution(cmd, reason) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`\n⚠️ Agent wants to run: \`${cmd}\`\nAllow? (Y/n) > `);
+  const tag = reason ? ` (${reason})` : "";
+  const answer = await rl.question(`\n⚠️ Agent wants to run${tag}: \`${cmd}\`\nAllow? (Y/n) > `);
   rl.close();
   return answer.trim().toLowerCase() !== "n";
 }
 
-function walkFiles(dir, include) {
-  let results = [];
+// Async recursive walker. Won't block the event loop on large repos.
+async function walkFiles(dir, include) {
+  const results = [];
+  let entries;
   try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
-          results = results.concat(walkFiles(fullPath, include));
-        }
-      } else {
-        const ext = path.extname(entry.name).toLowerCase();
-        if (BINARY_EXTS.has(ext)) continue;
-        if (include && !entry.name.endsWith(include.replace("*", ""))) continue;
-        results.push(fullPath);
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
+        const sub = await walkFiles(fullPath, include);
+        results.push(...sub);
       }
+    } else {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (BINARY_EXTS.has(ext)) continue;
+      if (include && !entry.name.endsWith(include.replace("*", ""))) continue;
+      results.push(fullPath);
     }
-  } catch { /* skip inaccessible dirs */ }
+  }
   return results;
 }
 
-const UNSAFE_PATH_MSG = "❌ Error: Path is outside the working directory. For security, the agent can only access files inside the current project.";
+const UNSAFE_PATH_MSG =
+  "❌ Error: Path is outside the working directory. For security, the agent can only access files inside the current project.";
+
+async function exists(p) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ===========================
 // 🔧 TOOL HANDLERS
@@ -54,18 +72,20 @@ export const tools = {
       console.log(`\n📄 [read_file] ${filePath}`);
 
       if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
-
-      if (!fs.existsSync(filePath)) {
+      if (!(await exists(filePath))) {
         return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use list_dir to explore available files, or grep_search to find files by name.`;
       }
 
-      const stat = fs.statSync(filePath);
+      const stat = await fs.stat(filePath);
       if (stat.isDirectory()) {
         return `❌ Error: '${filePath}' is a directory, not a file.\n💡 Tip: Use list_dir to view directory contents.`;
       }
 
-      const content = fs.readFileSync(filePath, "utf-8");
-      const numbered = content.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+      const content = await fs.readFile(filePath, "utf-8");
+      const numbered = content
+        .split("\n")
+        .map((line, i) => `${i + 1}: ${line}`)
+        .join("\n");
       return truncate(numbered, MAX_TOOL_OUTPUT_CHARS);
     } catch (err) {
       if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
@@ -77,17 +97,15 @@ export const tools = {
   write_file: async ({ path: filePath, content }) => {
     try {
       console.log(`\n✍️ [write_file] ${filePath}`);
-
       if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
-
       if (!content) {
         return "❌ Error: Content cannot be empty.\n💡 Tip: Provide the full content to write to the file.";
       }
 
       const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (!(await exists(dir))) await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(filePath, content);
 
-      fs.writeFileSync(filePath, content);
       const lines = content.split("\n").length;
       return `✅ Success: Written to ${filePath}\n   📊 ${content.length} characters, ${lines} lines`;
     } catch (err) {
@@ -100,24 +118,21 @@ export const tools = {
   edit_file: async ({ path: filePath, target, replacement }) => {
     try {
       console.log(`\n✏️ [edit_file] ${filePath}`);
-
       if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
-
-      if (!fs.existsSync(filePath)) {
-        return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files, or read_file to verify the path.`;
+      if (!(await exists(filePath))) {
+        return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files.`;
       }
-
       if (!target) {
-        return "❌ Error: Target string cannot be empty.\n💡 Tip: Specify the exact text to find and replace.";
+        return "❌ Error: Target string cannot be empty.";
       }
 
-      const content = fs.readFileSync(filePath, "utf-8");
+      const content = await fs.readFile(filePath, "utf-8");
       if (!content.includes(target)) {
-        return `❌ Error: Target string not found in '${filePath}'.\n💡 Tip: Use read_file first to verify the exact content. Make sure whitespace matches exactly.`;
+        return `❌ Error: Target string not found in '${filePath}'.\n💡 Tip: Use read_file first to verify the exact content.`;
       }
 
       const newContent = content.replace(target, replacement);
-      fs.writeFileSync(filePath, newContent);
+      await fs.writeFile(filePath, newContent);
 
       const tLines = target.split("\n").length;
       const rLines = replacement.split("\n").length;
@@ -134,19 +149,13 @@ export const tools = {
   list_dir: async ({ dir }) => {
     try {
       console.log(`\n📂 [list_dir] ${dir}`);
-
       if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
+      if (!(await exists(dir))) return `❌ Error: Directory not found at '${dir}'.`;
 
-      if (!fs.existsSync(dir)) {
-        return `❌ Error: Directory not found at '${dir}'.\n💡 Tip: Check the path or use list_dir on parent directory.`;
-      }
+      const stat = await fs.stat(dir);
+      if (!stat.isDirectory()) return `❌ Error: '${dir}' is not a directory.`;
 
-      const stat = fs.statSync(dir);
-      if (!stat.isDirectory()) {
-        return `❌ Error: '${dir}' is not a directory.\n💡 Tip: Use read_file to view file contents.`;
-      }
-
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = await fs.readdir(dir, { withFileTypes: true });
       if (entries.length === 0) return `📂 Directory '${dir}' is empty.`;
 
       return entries
@@ -162,17 +171,11 @@ export const tools = {
   grep_search: async ({ pattern, dir = ".", include, isRegex = false }) => {
     try {
       console.log(`\n🔍 [grep_search] "${pattern}" in ${dir}`);
-
       if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
+      if (!pattern) return "❌ Error: Search pattern cannot be empty.";
+      if (!(await exists(dir))) return `❌ Error: Directory '${dir}' not found.`;
 
-      if (!pattern) {
-        return "❌ Error: Search pattern cannot be empty.\n💡 Tip: Provide a search term or regex pattern.";
-      }
-      if (!fs.existsSync(dir)) {
-        return `❌ Error: Directory '${dir}' not found.\n💡 Tip: Use list_dir to explore available directories.`;
-      }
-
-      const files = walkFiles(dir, include);
+      const files = await walkFiles(dir, include);
       if (files.length === 0) {
         return `❌ No files found in '${dir}'${include ? ` matching '${include}'` : ""}.`;
       }
@@ -184,27 +187,25 @@ export const tools = {
       for (const file of files) {
         if (matches.length >= MAX_MATCHES) break;
         try {
-          const content = fs.readFileSync(file, "utf-8");
+          const content = await fs.readFile(file, "utf-8");
           const lines = content.split("\n");
           for (let i = 0; i < lines.length; i++) {
             if (matches.length >= MAX_MATCHES) break;
             const line = lines[i];
-            const found = regex
-              ? regex.test(line)
-              : line.toLowerCase().includes(pattern.toLowerCase());
+            const found = regex ? regex.test(line) : line.toLowerCase().includes(pattern.toLowerCase());
             if (regex) regex.lastIndex = 0;
             if (found) matches.push(`${file}:${i + 1}: ${line.trim()}`);
           }
-        } catch { /* skip unreadable files */ }
+        } catch {
+          /* skip unreadable files */
+        }
       }
 
-      if (matches.length === 0) {
-        return `❌ No matches found for '${pattern}' in ${files.length} files.`;
-      }
+      if (matches.length === 0) return `❌ No matches found for '${pattern}' in ${files.length} files.`;
 
       let result = `✅ Found ${matches.length} matches:\n\n` + matches.join("\n");
       if (matches.length >= MAX_MATCHES) {
-        result += `\n\n⚠️ Showing first ${MAX_MATCHES} matches. Use 'include' parameter to narrow your search.`;
+        result += `\n\n⚠️ Showing first ${MAX_MATCHES} matches. Use 'include' to narrow your search.`;
       }
       return result;
     } catch (err) {
@@ -217,12 +218,12 @@ export const tools = {
       console.log(`\n📁 [create_dir] ${dir}`);
       if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
       if (!dir || dir.trim() === "") return "❌ Error: Directory path cannot be empty.";
-      if (fs.existsSync(dir)) return `⚠️ Directory '${dir}' already exists.`;
+      if (await exists(dir)) return `⚠️ Directory '${dir}' already exists.`;
 
-      fs.mkdirSync(dir, { recursive: true });
+      await fs.mkdir(dir, { recursive: true });
       return `✅ Success: Created directory '${dir}'`;
     } catch (err) {
-      if (err.code === "EACCES") return `❌ Error: Permission denied. Cannot create '${dir}'.`;
+      if (err.code === "EACCES") return `❌ Error: Permission denied.`;
       return `❌ Error creating directory: ${err.message}`;
     }
   },
@@ -231,25 +232,21 @@ export const tools = {
     try {
       console.log(`\n🗑️ [delete_file] ${filePath}`);
       if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+      if (!(await exists(filePath))) return `❌ Error: File not found at '${filePath}'.`;
 
-      if (!fs.existsSync(filePath)) {
-        return `❌ Error: File not found at '${filePath}'.`;
-      }
-
-      const stat = fs.statSync(filePath);
+      const stat = await fs.stat(filePath);
       if (stat.isDirectory()) {
-        return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use rm -rf via run_command to delete directories (caution advised).`;
+        return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use rm -rf via run_command (caution advised).`;
       }
 
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const answer = await rl.question(`\n⚠️  Delete ${filePath}? (Y/n) > `);
       rl.close();
-
       if (answer.trim().toLowerCase() === "n") {
         return "🚫 Cancelled: Deletion denied by user.";
       }
 
-      fs.unlinkSync(filePath);
+      await fs.unlink(filePath);
       return `✅ Success: Deleted '${filePath}'`;
     } catch (err) {
       if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
@@ -261,12 +258,9 @@ export const tools = {
     try {
       console.log(`\nℹ️  [get_file_info] ${filePath}`);
       if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+      if (!(await exists(filePath))) return `❌ Error: File not found at '${filePath}'.`;
 
-      if (!fs.existsSync(filePath)) {
-        return `❌ Error: File not found at '${filePath}'.`;
-      }
-
-      const stat = fs.statSync(filePath);
+      const stat = await fs.stat(filePath);
       const info = {
         name: path.basename(filePath),
         path: filePath,
@@ -276,7 +270,6 @@ export const tools = {
         created: stat.birthtime.toISOString(),
         extension: path.extname(filePath) || "none",
       };
-
       return `📋 File Information:\n${JSON.stringify(info, null, 2)}`;
     } catch (err) {
       if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
@@ -287,41 +280,90 @@ export const tools = {
   run_command: async ({ cmd }) => {
     if (!cmd || cmd.trim() === "") return "❌ Error: Command cannot be empty.";
 
-    const isAllowed = await confirmExecution(cmd);
-    if (!isAllowed) {
-      console.log("🚫 [run_command] Denied by user.");
-      return "🚫 Cancelled: User denied permission to run command.";
+    const { verdict, reason } = classifyCommand(cmd);
+
+    if (verdict === "blocked") {
+      console.log(`\n🛑 [run_command] BLOCKED: ${cmd}`);
+      return `🛑 Blocked: Refusing to run potentially dangerous command.\nReason: ${reason}\n💡 If you genuinely need this, run it manually outside the agent.`;
     }
 
-    try {
-      console.log(`\n🚀 [run_command] ${cmd}`);
-      const output = execSync(cmd, {
-        shell: true,
-        stdio: "pipe",
-        timeout: COMMAND_TIMEOUT_MS,
-        maxBuffer: COMMAND_MAX_BUFFER,
-      });
-
-      const result = output.toString();
-      if (!result || result.trim() === "") {
-        return "✅ Success: Command executed (no output produced)";
+    if (verdict === "confirm") {
+      const ok = await confirmExecution(cmd, reason);
+      if (!ok) {
+        console.log("🚫 [run_command] Denied by user.");
+        return "🚫 Cancelled: User denied permission to run command.";
       }
-
-      return `✅ Success:\n${truncate(result, MAX_COMMAND_OUTPUT_CHARS)}`;
-    } catch (err) {
-      const exitCode = err.status || "unknown";
-      const stdout = err.stdout?.toString() || "";
-      const stderr = err.stderr?.toString() || "";
-
-      let errorMsg = `❌ Error: Command failed (exit code: ${exitCode})\n\n`;
-      if (stderr) errorMsg += `📛 Stderr:\n${truncate(stderr, 2000)}\n\n`;
-      if (stdout) errorMsg += `📄 Stdout:\n${truncate(stdout, 2000)}`;
-      errorMsg += `\n\n💡 Tip: Check command syntax and permissions.`;
-
-      return errorMsg;
+    } else {
+      console.log(`\n✅ [run_command] Auto-approved (${reason}): ${cmd}`);
     }
+
+    return runWithSpawn(cmd);
   },
 };
+
+// ===========================
+// 🔹 STREAMING COMMAND EXECUTION
+// ===========================
+// Uses spawn (not execSync) so stdout/stderr stream live to the terminal —
+// long-running commands like `npm install` are no longer invisible for minutes.
+function runWithSpawn(cmd) {
+  return new Promise((resolve) => {
+    console.log(`\n🚀 [run_command] ${cmd}`);
+    const shell = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "/bin/sh";
+    const shellArg = process.platform === "win32" ? "/c" : "-c";
+
+    const child = spawn(shell, [shellArg, cmd], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let stdoutBuf = "";
+    let stderrBuf = "";
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }, COMMAND_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdoutBuf += text;
+      process.stdout.write(text);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderrBuf += text;
+      process.stderr.write(text);
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve(`❌ Error: Failed to spawn command: ${err.message}`);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        return resolve(`❌ Error: Command timed out after ${COMMAND_TIMEOUT_MS / 1000}s and was killed.`);
+      }
+      if (code === 0) {
+        const out = stdoutBuf.trim() === "" ? "(no output)" : truncate(stdoutBuf, MAX_COMMAND_OUTPUT_CHARS);
+        return resolve(`✅ Success (exit 0):\n${out}`);
+      }
+      let errorMsg = `❌ Error: Command failed (exit code: ${code})\n\n`;
+      if (stderrBuf) errorMsg += `📛 Stderr:\n${truncate(stderrBuf, 2000)}\n\n`;
+      if (stdoutBuf) errorMsg += `📄 Stdout:\n${truncate(stdoutBuf, 2000)}`;
+      errorMsg += `\n\n💡 Tip: Check command syntax and permissions.`;
+      resolve(errorMsg);
+    });
+  });
+}
+
+// Keep a tiny sync escape hatch for callers that genuinely need it (none today).
+export const _syncFs = fsSync;
 
 // ===========================
 // 🔧 DECLARATIONS (Gemini API)
@@ -338,7 +380,8 @@ export const toolDeclarations = [
   },
   {
     name: "write_file",
-    description: "Write full content to a file. Auto-creates parent dirs. Use for NEW files or COMPLETE rewrites. For small changes, prefer edit_file.",
+    description:
+      "Write full content to a file. Auto-creates parent dirs. Use for NEW files or COMPLETE rewrites. For small changes, prefer edit_file.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -350,7 +393,8 @@ export const toolDeclarations = [
   },
   {
     name: "edit_file",
-    description: "Edit a file by finding an exact target string and replacing it. Only the FIRST occurrence is replaced. ALWAYS read_file first. Preferred over write_file for small changes — saves tokens.",
+    description:
+      "Edit a file by finding an exact target string and replacing it. Only the FIRST occurrence is replaced. ALWAYS read_file first. Preferred over write_file for small changes — saves tokens.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -372,7 +416,8 @@ export const toolDeclarations = [
   },
   {
     name: "grep_search",
-    description: "Search for a pattern across files recursively. Returns matching lines with file:line:content. Ignores node_modules, .git, and binary files. Much faster than reading files one by one.",
+    description:
+      "Search for a pattern across files recursively. Returns matching lines with file:line:content. Ignores node_modules, .git, and binary files. Much faster than reading files one by one.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -413,7 +458,8 @@ export const toolDeclarations = [
   },
   {
     name: "run_command",
-    description: "Execute a shell command. 60s timeout. Requires user confirmation. Use for scripts, installs, git, builds.",
+    description:
+      "Execute a shell command. Safe read-only commands (ls, git status, npm test, etc.) auto-run; write/unknown commands require user confirmation; dangerous patterns are blocked. Output streams live. 60s timeout.",
     parameters: {
       type: "OBJECT",
       properties: { cmd: { type: "STRING", description: "Shell command to execute" } },
