@@ -1,120 +1,104 @@
-# AI Coding Agent (myagent)
+# 🤖 AI Coding Agent (`myagent`)
 
-A terminal-based AI coding agent with RAG, streaming, multi-provider support, and MCP tool integration.
+A terminal-based AI coding agent with multi-provider LLM support, semantic RAG, MCP integration, and interactive diff preview.
+
+![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Tests](https://img.shields.io/badge/tests-36%20passing-success)
 
 ## ✨ Features
 
 - 🤖 **Multi-provider LLM** — Gemini, OpenAI, Anthropic (switch on-the-fly with `/model`)
-- 🔌 **MCP (Model Context Protocol)** — plug in external tool servers (GitHub, MySQL, filesystem, …)
-- 🔍 **Smart RAG** — line-based semantic index with pre-normalized embeddings
+- 🔌 **MCP (Model Context Protocol)** — plug in GitHub, MySQL, filesystem, and other tool servers
+- 🔍 **Smart RAG** — line-based semantic chunking with pre-normalized embeddings
 - ✏️ **Interactive diff preview** — review every edit before it lands on disk
 - 💰 **Accurate cost tracking** — uses real `usageMetadata` from each provider
 - 🛡️ **Safety by default** — path traversal blocked, dangerous commands refused, safe commands auto-approved
 - 🧠 **LLM-powered memory summarization** — context stays fresh without ballooning token cost
 - 📝 **Session transcript export** — `/save` produces a clean markdown log
+- ⚡ **Streaming everywhere** — text tokens, shell output, no silent waits
 
-## 🚀 Install
+## 🚀 Quickstart
 
 ```bash
-git clone <this-repo>
+git clone <repo>
 cd ai-coding-agent
 yarn install
-npm link          # registers `myagent` globally
-myagent           # first run will prompt for your API key
+npm link            # registers `myagent` globally
+myagent             # first run prompts for your Gemini API key
 ```
 
-## 🔑 Environment variables
-
-The first `myagent` run prompts for a Gemini key and saves it to `~/.myagent.env`.
-For other providers, add to `~/.myagent.env` or a local `.env`:
-
-```env
-GEMINI_API_KEY=...
-OPENAI_API_KEY=...       # optional, for /provider openai
-ANTHROPIC_API_KEY=...    # optional, for /provider anthropic
+```
+🧑 > /index .
+🧑 > Refactor src/utils.js to use async/await
+🧑 > /model claude-3-5-haiku-latest
+🧑 > /save session.md
 ```
 
-## 🎮 Slash commands
+## 📚 Documentation
 
-| Command | Description |
-| --- | --- |
+| Topic | Link |
+|---|---|
+| Install & first run | [docs/getting-started.md](./docs/getting-started.md) |
+| Config reference | [docs/configuration.md](./docs/configuration.md) |
+| All slash commands | [docs/commands.md](./docs/commands.md) |
+| LLM providers (Gemini/OpenAI/Anthropic) | [docs/providers.md](./docs/providers.md) |
+| MCP server integration | [docs/mcp.md](./docs/mcp.md) |
+| Built-in tools reference | [docs/tools.md](./docs/tools.md) |
+| Semantic RAG tuning | [docs/rag.md](./docs/rag.md) |
+| Cost tracking | [docs/cost-tracking.md](./docs/cost-tracking.md) |
+| Security model | [docs/security.md](./docs/security.md) |
+| Troubleshooting | [docs/troubleshooting.md](./docs/troubleshooting.md) |
+| Architecture | [docs/architecture.md](./docs/architecture.md) |
+| Contributing | [docs/contributing.md](./docs/contributing.md) |
+| Changelog | [docs/changelog.md](./docs/changelog.md) |
+
+**Start with [getting-started.md](./docs/getting-started.md).** The full index is at [docs/README.md](./docs/README.md).
+
+## 🎮 Slash Commands (cheat sheet)
+
+| Command | Purpose |
+|---|---|
 | `/help` | List all commands |
-| `/clear` | Clear conversation memory |
-| `/index <folder>` | Build semantic index of a folder |
-| `/config` | Show active configuration |
-| `/model [id]` | Show or switch model (`gpt-4o-mini`, `claude-3-5-haiku-latest`, `gemini-2.0-flash`, …) |
-| `/provider [name]` | Switch LLM provider (`gemini`, `openai`, `anthropic`) |
-| `/cache [stats\|clear\|clean]` | Cache management |
-| `/cost [report\|history\|reset]` | Cost tracking |
-| `/save [file]` | Export session transcript to markdown |
-| `/mcp [stop]` | List or stop MCP server connections |
-| `exit` / `quit` | Leave the agent |
+| `/clear` | Reset conversation memory |
+| `/index <folder>` | Build semantic index |
+| `/model [id]` | Show or switch model |
+| `/provider [name]` | Switch LLM provider |
+| `/save [file]` | Export session transcript |
+| `/mcp` | List/connect MCP servers |
+| `/cache stats\|clear\|clean` | Cache management |
+| `/cost report\|history\|reset` | Cost tracking |
+| `/config` | Show current config |
+| `exit` / `quit` | Leave |
 
-## ⚙️ Configuration (`agent.config.json`)
+Full reference: [docs/commands.md](./docs/commands.md).
 
-```json
-{
-  "provider": "gemini",
-  "model": "gemini-2.5-flash",
-  "plannerModel": "gemini-2.5-flash",
-  "summaryModel": "gemini-2.5-flash",
-  "maxIterations": 25,
-  "maxMemoryTurns": 20,
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
-    }
-  }
-}
+## 🏗️ Architecture at a Glance
+
+```
+bin/cli.js                       # entrypoint
+src/
+├── core/                        # agent loop, memory, planner, transcript
+├── llm/providers/               # Gemini + OpenAI + Anthropic adapters
+├── rag/                         # embedding, chunking, cache
+├── mcp/                         # MCP client
+├── tools/                       # 9 built-in tools + command classifier + diff
+├── commands/slash.js            # all /commands
+├── config/                      # config.js + constants.js
+└── utils/utils.js
 ```
 
-MCP tools appear to the agent as `serverName.toolName` (e.g. `github.create_issue`). They're merged with the built-in tools transparently.
+Deep dive: [docs/architecture.md](./docs/architecture.md).
 
 ## 🧪 Development
 
 ```bash
-yarn test           # 36 unit tests via node:test
-yarn lint           # ESLint (flat config)
+yarn test           # 36 unit tests via node:test (~150ms)
+yarn lint           # ESLint 9 flat config
 yarn format         # Prettier
 ```
 
-## 🏗️ Architecture
-
-```
-bin/cli.js                 # entrypoint
-src/
-├── core/
-│   ├── agents.js          # provider-agnostic agent loop
-│   ├── memory.js          # load/save/summarize (auto-migrates legacy format)
-│   ├── planner.js         # short-request auto-skip
-│   └── transcript.js      # markdown export
-├── llm/
-│   ├── llm.js             # legacy compat + provider router
-│   ├── cost-tracker.js    # multi-provider pricing + usageMetadata
-│   └── providers/
-│       ├── base.js        # interface + schema converter
-│       ├── gemini.js
-│       ├── openai.js
-│       └── anthropic.js
-├── rag/
-│   ├── semantic.js        # line-based chunking, pre-normalized vectors
-│   └── cache.js           # TTL + LRU eviction
-├── mcp/
-│   └── client.js          # stdio MCP client, tool merging
-├── tools/
-│   ├── tools.js           # file ops + run_command (spawn, streaming)
-│   ├── command-classifier.js  # block/auto/confirm
-│   └── diff.js            # colored unified diff
-├── commands/slash.js      # /help /model /save /mcp …
-├── config/{config.js,constants.js}
-└── utils/utils.js
-```
+See [docs/contributing.md](./docs/contributing.md) for conventions, PR workflow, and how to add providers/tools/commands.
 
 ## 📜 License
 
