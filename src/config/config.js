@@ -1,6 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { detectOS, detectShell } from "./utils.js";
+import os from "os";
+import { detectOS, detectShell } from "../utils/utils.js";
+import {
+  MAX_ITERATIONS_DEFAULT,
+  MAX_MEMORY_TURNS_DEFAULT,
+  GLOBAL_ENV_FILENAME,
+} from "./constants.js";
 
 // ===========================
 // 🔹 DEFAULT CONFIG
@@ -9,8 +15,8 @@ const defaultConfig = {
   model: "gemini-2.5-flash",
   plannerModel: "gemini-2.5-flash",
   summaryModel: "gemini-2.5-flash",
-  maxIterations: 25,
-  maxMemoryTurns: 20,
+  maxIterations: MAX_ITERATIONS_DEFAULT,
+  maxMemoryTurns: MAX_MEMORY_TURNS_DEFAULT,
 };
 
 // ===========================
@@ -52,21 +58,36 @@ You have access to powerful tools via Function Calling: read files, write files,
 }
 
 // ===========================
-// 🔹 LOAD CONFIG
+// 🔹 LOAD CONFIG (lazy singleton)
 // ===========================
+let _cachedConfig = null;
+
 export function loadConfig() {
+  if (_cachedConfig) return _cachedConfig;
+
   const customConfigPath = path.join(process.cwd(), "agent.config.json");
 
   if (fs.existsSync(customConfigPath)) {
     try {
       const customConfig = JSON.parse(fs.readFileSync(customConfigPath, "utf-8"));
-      return { ...defaultConfig, ...customConfig };
+      _cachedConfig = { ...defaultConfig, ...customConfig };
+      return _cachedConfig;
     } catch (err) {
       console.warn(`⚠️ Failed to read agent.config.json: ${err.message}. Using defaults.`);
     }
   }
 
-  return defaultConfig;
+  _cachedConfig = defaultConfig;
+  return _cachedConfig;
 }
 
-export const config = loadConfig();
+export function getGlobalEnvPath() {
+  return path.join(os.homedir(), GLOBAL_ENV_FILENAME);
+}
+
+// Backwards-compatible named export for existing call-sites.
+export const config = new Proxy({}, {
+  get(_target, prop) {
+    return loadConfig()[prop];
+  },
+});

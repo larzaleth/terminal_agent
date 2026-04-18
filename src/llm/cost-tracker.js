@@ -1,5 +1,6 @@
 import fs from "fs";
 import chalk from "chalk";
+import { COST_REPORT_FILE } from "../config/constants.js";
 
 // ===========================
 // 🔹 PRICING (per 1K tokens)
@@ -10,21 +11,18 @@ const PRICING = {
     output: 0.000075,   // $0.075 per 1M tokens
   },
   "gemini-2.0-flash": {
-    input: 0.00001,     // $0.01 per 1M tokens
-    output: 0.00004,    // $0.04 per 1M tokens
+    input: 0.00001,
+    output: 0.00004,
   },
   "text-embedding-004": {
-    input: 0.00001,     // $0.01 per 1M tokens
+    input: 0.00001,
   },
 };
 
-// ===========================
-// 🔹 TOKEN ESTIMATION
-// ===========================
+// Fallback char→token ratio ONLY used when the API did not return usageMetadata.
+// Real counts come from response.usageMetadata (populated by Gemini).
 function estimateTokens(text) {
   if (!text) return 0;
-  // Rough estimation: 1 token ≈ 4 characters for English
-  // More conservative for better accuracy
   return Math.ceil(text.length / 3.5);
 }
 
@@ -38,27 +36,38 @@ export class CostTracker {
 
   reset() {
     this.usage = {
-      generation: {
-        inputTokens: 0,
-        outputTokens: 0,
-        calls: 0,
-      },
-      embeddings: {
-        tokens: 0,
-        calls: 0,
-      },
+      generation: { inputTokens: 0, outputTokens: 0, calls: 0 },
+      embeddings: { tokens: 0, calls: 0 },
       cacheHits: 0,
       cacheMisses: 0,
     };
     this.startTime = Date.now();
   }
 
-  // ===========================
-  // 🔹 TRACK GENERATION
-  // ===========================
-  trackGeneration(model, inputText, outputText) {
-    const inputTokens = estimateTokens(inputText);
-    const outputTokens = estimateTokens(outputText);
+  /**
+   * Track an LLM generation call. Prefer passing exact token counts from
+   * `response.usageMetadata`; falls back to char-based estimation only
+   * when counts are not provided.
+   *
+   * @param {string} _model
+   * @param {object|string} inputOrMeta - either usageMetadata {promptTokenCount, candidatesTokenCount} OR raw input text
+   * @param {string} [outputText] - raw output text (only used when first arg is string)
+   */
+  trackGeneration(_model, inputOrMeta, outputText) {
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    if (inputOrMeta && typeof inputOrMeta === "object") {
+      inputTokens = inputOrMeta.promptTokenCount ?? inputOrMeta.inputTokens ?? 0;
+      outputTokens =
+        inputOrMeta.candidatesTokenCount ??
+        inputOrMeta.outputTokens ??
+        inputOrMeta.totalTokenCount - inputTokens ??
+        0;
+    } else {
+      inputTokens = estimateTokens(inputOrMeta);
+      outputTokens = estimateTokens(outputText);
+    }
 
     this.usage.generation.inputTokens += inputTokens;
     this.usage.generation.outputTokens += outputTokens;
@@ -67,35 +76,26 @@ export class CostTracker {
     return { inputTokens, outputTokens };
   }
 
-  // ===========================
-  // 🔹 TRACK EMBEDDING
-  // ===========================
   trackEmbedding(text, fromCache = false) {
     if (fromCache) {
       this.usage.cacheHits += 1;
-    } else {
-      this.usage.cacheMisses += 1;
-      const tokens = estimateTokens(text);
-      this.usage.embeddings.tokens += tokens;
-      this.usage.embeddings.calls += 1;
-      return tokens;
+      return 0;
     }
-    return 0;
+    this.usage.cacheMisses += 1;
+    const tokens = estimateTokens(text);
+    this.usage.embeddings.tokens += tokens;
+    this.usage.embeddings.calls += 1;
+    return tokens;
   }
 
-  // ===========================
-  // 🔹 CALCULATE COST
-  // ===========================
   calculateCost(model) {
     const pricing = PRICING[model] || PRICING["gemini-2.5-flash"];
-    
     const generationCost =
       (this.usage.generation.inputTokens / 1000) * pricing.input +
       (this.usage.generation.outputTokens / 1000) * pricing.output;
 
     const embeddingPricing = PRICING["text-embedding-004"];
-    const embeddingCost =
-      (this.usage.embeddings.tokens / 1000) * embeddingPricing.input;
+    const embeddingCost = (this.usage.embeddings.tokens / 1000) * embeddingPricing.input;
 
     return {
       generation: generationCost,
@@ -104,27 +104,17 @@ export class CostTracker {
     };
   }
 
-  // ===========================
-  // 🔹 GET STATISTICS
-  // ===========================
   getStats(model) {
     const cost = this.calculateCost(model);
     const duration = (Date.now() - this.startTime) / 1000;
-    const cacheHitRate = this.usage.cacheHits + this.usage.cacheMisses > 0
-      ? (this.usage.cacheHits / (this.usage.cacheHits + this.usage.cacheMisses) * 100).toFixed(1)
+    const totalCacheEvents = this.usage.cacheHits + this.usage.cacheMisses;
+    const cacheHitRate = totalCacheEvents > 0
+      ? (this.usage.cacheHits / totalCacheEvents * 100).toFixed(1)
       : 0;
 
-    return {
-      usage: this.usage,
-      cost,
-      duration,
-      cacheHitRate,
-    };
+    return { usage: this.usage, cost, duration, cacheHitRate };
   }
 
-  // ===========================
-  // 🔹 DISPLAY REPORT
-  // ===========================
   displayReport(model) {
     const stats = this.getStats(model);
 
@@ -151,28 +141,13 @@ export class CostTracker {
     console.log(chalk.dim(`  Embeddings:    $${stats.cost.embeddings.toFixed(6)}`));
     console.log(chalk.green.bold(`  Total:         $${stats.cost.total.toFixed(6)}`));
 
-    const savedCost = stats.usage.cacheHits > 0
-      ? (stats.usage.cacheHits * stats.cost.total / (stats.usage.cacheHits + stats.usage.cacheMisses))
-      : 0;
-    
-    if (savedCost > 0) {
-      console.log(chalk.green(`  Saved (cache): ~$${savedCost.toFixed(6)}`));
-    }
-
     console.log(chalk.white(`\n⏱️  Session Duration: ${stats.duration.toFixed(1)}s`));
     console.log(chalk.cyan("=".repeat(50) + "\n"));
   }
 
-  // ===========================
-  // 🔹 SAVE TO FILE
-  // ===========================
-  saveToFile(model, filename = "cost-report.json") {
+  saveToFile(model, filename = COST_REPORT_FILE) {
     const stats = this.getStats(model);
-    const report = {
-      timestamp: new Date().toISOString(),
-      model,
-      ...stats,
-    };
+    const report = { timestamp: new Date().toISOString(), model, ...stats };
 
     try {
       let history = [];
@@ -180,30 +155,20 @@ export class CostTracker {
         history = JSON.parse(fs.readFileSync(filename, "utf-8"));
       }
       history.push(report);
-
-      // Keep only last 100 sessions
-      if (history.length > 100) {
-        history = history.slice(-100);
-      }
-
+      if (history.length > 100) history = history.slice(-100);
       fs.writeFileSync(filename, JSON.stringify(history, null, 2));
     } catch (err) {
       console.error(chalk.red(`❌ Failed to save cost report: ${err.message}`));
     }
   }
 
-  // ===========================
-  // 🔹 QUICK SUMMARY
-  // ===========================
   getQuickSummary(model) {
     const stats = this.getStats(model);
-    return `💰 $${stats.cost.total.toFixed(6)} | 📊 ${stats.usage.generation.inputTokens + stats.usage.generation.outputTokens} tokens | 💾 ${stats.cacheHitRate}% cache hit`;
+    const total = stats.usage.generation.inputTokens + stats.usage.generation.outputTokens;
+    return `💰 $${stats.cost.total.toFixed(6)} | 📊 ${total} tokens | 💾 ${stats.cacheHitRate}% cache hit`;
   }
 }
 
-// ===========================
-// 🔹 GLOBAL TRACKER INSTANCE
-// ===========================
 export const globalTracker = new CostTracker();
 
 // ===========================
@@ -211,16 +176,16 @@ export const globalTracker = new CostTracker();
 // ===========================
 export function viewCostHistory(limit = 10) {
   try {
-    if (!fs.existsSync("cost-report.json")) {
+    if (!fs.existsSync(COST_REPORT_FILE)) {
       console.log(chalk.yellow("📊 No cost history found."));
       return;
     }
 
-    const history = JSON.parse(fs.readFileSync("cost-report.json", "utf-8"));
+    const history = JSON.parse(fs.readFileSync(COST_REPORT_FILE, "utf-8"));
     const recent = history.slice(-limit);
 
     console.log(chalk.cyan("\n" + "=".repeat(50)));
-    console.log(chalk.cyan.bold("📊 COST HISTORY (Last " + limit + " sessions)"));
+    console.log(chalk.cyan.bold(`📊 COST HISTORY (Last ${limit} sessions)`));
     console.log(chalk.cyan("=".repeat(50) + "\n"));
 
     let totalCost = 0;

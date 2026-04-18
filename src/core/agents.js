@@ -1,26 +1,19 @@
-import { ai } from "./llm.js";
-import { tools, toolDeclarations } from "./tools.js";
+import pLimit from "p-limit";
+import { ai } from "../llm/llm.js";
+import { tools, toolDeclarations } from "../tools/tools.js";
 import { loadMemory, saveMemory } from "./memory.js";
-import { loadIndex, search, buildContext } from "./semantic.js";
+import { loadIndex, search, buildContext } from "../rag/semantic.js";
 import { createPlan } from "./planner.js";
-import { config, getSystemPrompt } from "./config.js";
-import { retry, isReadOnlyTool } from "./utils.js";
-import { globalTracker } from "./cost-tracker.js";
-
-const agentModel = config.model;
+import { config, getSystemPrompt } from "../config/config.js";
+import { retry, isReadOnlyTool } from "../utils/utils.js";
+import { globalTracker } from "../llm/cost-tracker.js";
+import { TOOL_CONCURRENCY } from "../config/constants.js";
 
 /**
  * Main agent loop with streaming, parallel tool execution, and retry logic.
  *
  * @param {string} userInput - The user's request
  * @param {object} callbacks - Event callbacks for UI integration
- * @param {function} callbacks.onPlan - Called with plan array
- * @param {function} callbacks.onThinking - Called when LLM is processing
- * @param {function} callbacks.onText - Called with streamed text chunks
- * @param {function} callbacks.onToolCall - Called with (toolName, args)
- * @param {function} callbacks.onToolResult - Called with (toolName, resultPreview)
- * @param {function} callbacks.onDone - Called when agent finishes
- * @param {function} callbacks.onError - Called with error
  */
 export async function runAgent(userInput, callbacks = {}) {
   const {
@@ -33,10 +26,11 @@ export async function runAgent(userInput, callbacks = {}) {
     onError = () => {},
   } = callbacks;
 
+  const agentModel = config.model;
   let memory = loadMemory();
   const systemInstruction = getSystemPrompt();
 
-  // ─── STEP 1: LLM-POWERED PLAN ───
+  // ─── STEP 1: LLM-POWERED PLAN (auto-skipped for short requests) ───
   onThinking();
   let plan;
   try {
@@ -64,16 +58,14 @@ export async function runAgent(userInput, callbacks = {}) {
     ? `User request:\n${userInput}\n\nRelevant code context:\n${context}\n\nFollow existing code patterns strictly.`
     : userInput;
 
-  memory.push({
-    role: "user",
-    parts: [{ text: userMessage }],
-  });
+  memory.push({ role: "user", parts: [{ text: userMessage }] });
 
   // ─── STEP 4: AGENT LOOP (STREAMING) ───
   let isDone = false;
   let finalResponse = "";
   let iterations = 0;
   const maxIterations = config.maxIterations || 25;
+  const toolLimit = pLimit(TOOL_CONCURRENCY);
 
   while (!isDone && iterations < maxIterations) {
     iterations++;
@@ -81,9 +73,9 @@ export async function runAgent(userInput, callbacks = {}) {
 
     let streamedText = "";
     const functionCalls = [];
+    let usageMetadata = null;
 
     try {
-      // 🔥 STREAMING: generateContentStream for real-time output
       const stream = await retry(() =>
         ai.models.generateContentStream({
           model: agentModel,
@@ -95,7 +87,6 @@ export async function runAgent(userInput, callbacks = {}) {
         })
       );
 
-      // Process stream chunks in real-time
       for await (const chunk of stream) {
         const parts = chunk.candidates?.[0]?.content?.parts || [];
         for (const part of parts) {
@@ -103,21 +94,24 @@ export async function runAgent(userInput, callbacks = {}) {
             streamedText += part.text;
             onText(part.text);
           }
-          if (part.functionCall) {
-            functionCalls.push(part);
-          }
+          if (part.functionCall) functionCalls.push(part);
         }
+        // Gemini emits usageMetadata on the final chunk — overwrite so the
+        // last non-null wins.
+        if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
       }
     } catch (err) {
       onError(err);
       break;
     }
 
-    // Track generation cost
-    const inputText = memory.map(m => 
-      m.parts?.map(p => p.text || "").join("") || ""
-    ).join(" ");
-    globalTracker.trackGeneration(agentModel, inputText, streamedText);
+    // Use exact token counts from the API when available — char-based
+    // estimation is only a fallback.
+    if (usageMetadata) {
+      globalTracker.trackGeneration(agentModel, usageMetadata);
+    } else {
+      globalTracker.trackGeneration(agentModel, "", streamedText);
+    }
 
     // Build model message for memory
     const modelParts = [];
@@ -132,27 +126,28 @@ export async function runAgent(userInput, callbacks = {}) {
     if (functionCalls.length > 0) {
       const responses = [];
 
-      // Separate read-only (parallel) vs write (sequential)
       const readCalls = functionCalls.filter((fc) => isReadOnlyTool(fc.functionCall.name));
       const writeCalls = functionCalls.filter((fc) => !isReadOnlyTool(fc.functionCall.name));
 
-      // ⚡ Execute read-only tools in PARALLEL
+      // ⚡ Read-only tools in parallel — concurrency-capped to avoid 429s.
       if (readCalls.length > 0) {
         const readResults = await Promise.all(
-          readCalls.map(async (fc) => {
+          readCalls.map((fc) => toolLimit(async () => {
             const { name, args } = fc.functionCall;
             onToolCall(name, args);
             const handler = tools[name];
-            if (!handler) return { functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } };
+            if (!handler) {
+              return { functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } };
+            }
             const result = await handler(args);
             onToolResult(name, typeof result === "string" ? result.slice(0, 100) : "done");
             return { functionResponse: { name, response: { result } } };
-          })
+          }))
         );
         responses.push(...readResults);
       }
 
-      // 🔒 Execute write tools SEQUENTIALLY
+      // 🔒 Write tools sequentially.
       for (const fc of writeCalls) {
         const { name, args } = fc.functionCall;
         onToolCall(name, args);
@@ -180,10 +175,7 @@ export async function runAgent(userInput, callbacks = {}) {
 
   onDone();
 
-  // Save memory (async - with LLM summarization if needed)
   await saveMemory(memory);
-
-  // Save cost report to history
   globalTracker.saveToFile(agentModel);
 
   return finalResponse;

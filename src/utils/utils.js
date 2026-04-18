@@ -1,4 +1,5 @@
 import os from "os";
+import path from "path";
 
 // ===========================
 // 🔹 OS & SHELL DETECTION
@@ -15,6 +16,20 @@ export function detectShell() {
 }
 
 // ===========================
+// 🔹 PATH SAFETY
+// ===========================
+// Resolves `filePath` against the current working directory and ensures
+// the resolved location stays inside the CWD tree. Rejects absolute paths
+// that escape (e.g. /etc/passwd, C:\Windows\...) and traversal via `..`.
+export function isSafePath(filePath, root = process.cwd()) {
+  if (typeof filePath !== "string" || filePath.trim() === "") return false;
+  const normalizedRoot = path.resolve(root);
+  const resolved = path.resolve(normalizedRoot, filePath);
+  if (resolved === normalizedRoot) return true;
+  return resolved.startsWith(normalizedRoot + path.sep);
+}
+
+// ===========================
 // 🔹 RETRY WITH EXPONENTIAL BACKOFF
 // ===========================
 export async function retry(fn, options = {}) {
@@ -26,13 +41,13 @@ export async function retry(fn, options = {}) {
     } catch (err) {
       if (attempt === maxRetries) throw err;
 
+      const status = err?.status ?? err?.response?.status;
+      const msg = err?.message ?? "";
       const isRetryable =
-        err.message?.includes("429") ||
-        err.message?.includes("503") ||
-        err.message?.includes("ECONNRESET") ||
-        err.message?.includes("ETIMEDOUT") ||
-        err.message?.includes("rate limit") ||
-        err.message?.includes("overloaded");
+        status === 429 ||
+        status === 503 ||
+        status === 502 ||
+        /429|503|502|ECONNRESET|ETIMEDOUT|rate.?limit|overloaded/i.test(msg);
 
       if (!isRetryable) throw err;
 
@@ -65,4 +80,9 @@ export function truncate(str, maxLen = 5000) {
   if (!str) return "";
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen) + `\n... (truncated, ${str.length - maxLen} more chars)`;
+}
+
+export function wordCount(text) {
+  if (!text || typeof text !== "string") return 0;
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }

@@ -2,35 +2,25 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import readline from "readline/promises";
-import { truncate } from "./utils.js";
+import { truncate, isSafePath } from "../utils/utils.js";
+import {
+  IGNORE_DIRS,
+  BINARY_EXTS,
+  MAX_TOOL_OUTPUT_CHARS,
+  MAX_COMMAND_OUTPUT_CHARS,
+  COMMAND_TIMEOUT_MS,
+  COMMAND_MAX_BUFFER,
+} from "../config/constants.js";
 
 // ===========================
 // 🔹 HELPERS
 // ===========================
-function isSafePath(filePath) {
-  return !filePath.includes("..");
-}
-
 async function confirmExecution(cmd) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`\n⚠️ Agent wants to run: \`${cmd}\`\nAllow? (Y/n) > `);
   rl.close();
   return answer.trim().toLowerCase() !== "n";
 }
-
-const IGNORE_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", ".next",
-  "__pycache__", ".venv", "vendor", ".cache", "coverage",
-]);
-
-const BINARY_EXTS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp",
-  ".woff", ".woff2", ".ttf", ".eot", ".svg",
-  ".mp3", ".mp4", ".avi", ".mov", ".webm",
-  ".zip", ".gz", ".tar", ".rar", ".7z",
-  ".pdf", ".exe", ".dll", ".so", ".dylib",
-  ".pyc", ".lock", ".map",
-]);
 
 function walkFiles(dir, include) {
   let results = [];
@@ -53,18 +43,18 @@ function walkFiles(dir, include) {
   return results;
 }
 
+const UNSAFE_PATH_MSG = "❌ Error: Path is outside the working directory. For security, the agent can only access files inside the current project.";
+
 // ===========================
-// 🔧 TOOL HANDLERS (WITH IMPROVED ERROR MESSAGES)
+// 🔧 TOOL HANDLERS
 // ===========================
 export const tools = {
   read_file: async ({ path: filePath }) => {
     try {
       console.log(`\n📄 [read_file] ${filePath}`);
-      
-      if (!isSafePath(filePath)) {
-        return "❌ Error: Path traversal detected. Cannot access paths with '..' for security reasons.";
-      }
-      
+
+      if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+
       if (!fs.existsSync(filePath)) {
         return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use list_dir to explore available files, or grep_search to find files by name.`;
       }
@@ -76,14 +66,10 @@ export const tools = {
 
       const content = fs.readFileSync(filePath, "utf-8");
       const numbered = content.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-      return truncate(numbered, 8000);
+      return truncate(numbered, MAX_TOOL_OUTPUT_CHARS);
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied for '${filePath}'.\n💡 Tip: Check file permissions or run with appropriate privileges.`;
-      }
-      if (err.code === "EISDIR") {
-        return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use list_dir instead.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
+      if (err.code === "EISDIR") return `❌ Error: '${filePath}' is a directory.`;
       return `❌ Error reading file: ${err.message}`;
     }
   },
@@ -91,30 +77,22 @@ export const tools = {
   write_file: async ({ path: filePath, content }) => {
     try {
       console.log(`\n✍️ [write_file] ${filePath}`);
-      
-      if (!isSafePath(filePath)) {
-        return "❌ Error: Path traversal detected. Cannot write to paths with '..' for security reasons.";
-      }
+
+      if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
 
       if (!content) {
         return "❌ Error: Content cannot be empty.\n💡 Tip: Provide the full content to write to the file.";
       }
 
       const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
       fs.writeFileSync(filePath, content);
       const lines = content.split("\n").length;
       return `✅ Success: Written to ${filePath}\n   📊 ${content.length} characters, ${lines} lines`;
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied. Cannot write to '${filePath}'.\n💡 Tip: Check directory permissions.`;
-      }
-      if (err.code === "ENOSPC") {
-        return `❌ Error: No space left on device.\n💡 Tip: Free up disk space before writing files.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
+      if (err.code === "ENOSPC") return `❌ Error: No space left on device.`;
       return `❌ Error writing file: ${err.message}`;
     }
   },
@@ -122,11 +100,9 @@ export const tools = {
   edit_file: async ({ path: filePath, target, replacement }) => {
     try {
       console.log(`\n✏️ [edit_file] ${filePath}`);
-      
-      if (!isSafePath(filePath)) {
-        return "❌ Error: Path traversal detected.";
-      }
-      
+
+      if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+
       if (!fs.existsSync(filePath)) {
         return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files, or read_file to verify the path.`;
       }
@@ -136,24 +112,21 @@ export const tools = {
       }
 
       const content = fs.readFileSync(filePath, "utf-8");
-      
       if (!content.includes(target)) {
         return `❌ Error: Target string not found in '${filePath}'.\n💡 Tip: Use read_file first to verify the exact content. Make sure whitespace matches exactly.`;
       }
 
       const newContent = content.replace(target, replacement);
       fs.writeFileSync(filePath, newContent);
-      
+
       const tLines = target.split("\n").length;
       const rLines = replacement.split("\n").length;
       const delta = rLines - tLines;
       const deltaStr = delta > 0 ? `+${delta}` : delta;
-      
+
       return `✅ Success: Edited ${filePath}\n   📝 Replaced ${tLines} lines → ${rLines} lines (${deltaStr})`;
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied for '${filePath}'.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
       return `❌ Error editing file: ${err.message}`;
     }
   },
@@ -161,11 +134,9 @@ export const tools = {
   list_dir: async ({ dir }) => {
     try {
       console.log(`\n📂 [list_dir] ${dir}`);
-      
-      if (!isSafePath(dir)) {
-        return "❌ Error: Path traversal detected.";
-      }
-      
+
+      if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
+
       if (!fs.existsSync(dir)) {
         return `❌ Error: Directory not found at '${dir}'.\n💡 Tip: Check the path or use list_dir on parent directory.`;
       }
@@ -176,21 +147,14 @@ export const tools = {
       }
 
       const entries = fs.readdirSync(dir, { withFileTypes: true });
-      
-      if (entries.length === 0) {
-        return `📂 Directory '${dir}' is empty.`;
-      }
+      if (entries.length === 0) return `📂 Directory '${dir}' is empty.`;
 
       return entries
         .map((e) => `${e.isDirectory() ? "📁" : "📄"} ${e.name}${e.isDirectory() ? "/" : ""}`)
         .join("\n");
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied for '${dir}'.`;
-      }
-      if (err.code === "ENOTDIR") {
-        return `❌ Error: '${dir}' is not a directory.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${dir}'.`;
+      if (err.code === "ENOTDIR") return `❌ Error: '${dir}' is not a directory.`;
       return `❌ Error listing directory: ${err.message}`;
     }
   },
@@ -198,19 +162,19 @@ export const tools = {
   grep_search: async ({ pattern, dir = ".", include, isRegex = false }) => {
     try {
       console.log(`\n🔍 [grep_search] "${pattern}" in ${dir}`);
-      
+
+      if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
+
       if (!pattern) {
         return "❌ Error: Search pattern cannot be empty.\n💡 Tip: Provide a search term or regex pattern.";
       }
-
       if (!fs.existsSync(dir)) {
         return `❌ Error: Directory '${dir}' not found.\n💡 Tip: Use list_dir to explore available directories.`;
       }
 
       const files = walkFiles(dir, include);
-      
       if (files.length === 0) {
-        return `❌ No files found in '${dir}'${include ? ` matching '${include}'` : ""}.\n💡 Tip: Check if directory contains readable files.`;
+        return `❌ No files found in '${dir}'${include ? ` matching '${include}'` : ""}.`;
       }
 
       const matches = [];
@@ -229,17 +193,15 @@ export const tools = {
               ? regex.test(line)
               : line.toLowerCase().includes(pattern.toLowerCase());
             if (regex) regex.lastIndex = 0;
-            if (found) {
-              matches.push(`${file}:${i + 1}: ${line.trim()}`);
-            }
+            if (found) matches.push(`${file}:${i + 1}: ${line.trim()}`);
           }
         } catch { /* skip unreadable files */ }
       }
 
       if (matches.length === 0) {
-        return `❌ No matches found for '${pattern}' in ${files.length} files.\n💡 Tip: Try a different search term or check spelling.`;
+        return `❌ No matches found for '${pattern}' in ${files.length} files.`;
       }
-      
+
       let result = `✅ Found ${matches.length} matches:\n\n` + matches.join("\n");
       if (matches.length >= MAX_MATCHES) {
         result += `\n\n⚠️ Showing first ${MAX_MATCHES} matches. Use 'include' parameter to narrow your search.`;
@@ -253,25 +215,14 @@ export const tools = {
   create_dir: async ({ dir }) => {
     try {
       console.log(`\n📁 [create_dir] ${dir}`);
-      
-      if (!isSafePath(dir)) {
-        return "❌ Error: Path traversal detected.";
-      }
-
-      if (!dir || dir.trim() === "") {
-        return "❌ Error: Directory path cannot be empty.";
-      }
-
-      if (fs.existsSync(dir)) {
-        return `⚠️ Directory '${dir}' already exists.`;
-      }
+      if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
+      if (!dir || dir.trim() === "") return "❌ Error: Directory path cannot be empty.";
+      if (fs.existsSync(dir)) return `⚠️ Directory '${dir}' already exists.`;
 
       fs.mkdirSync(dir, { recursive: true });
       return `✅ Success: Created directory '${dir}'`;
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied. Cannot create '${dir}'.\n💡 Tip: Check parent directory permissions.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied. Cannot create '${dir}'.`;
       return `❌ Error creating directory: ${err.message}`;
     }
   },
@@ -279,13 +230,10 @@ export const tools = {
   delete_file: async ({ path: filePath }) => {
     try {
       console.log(`\n🗑️ [delete_file] ${filePath}`);
-      
-      if (!isSafePath(filePath)) {
-        return "❌ Error: Path traversal detected.";
-      }
-      
+      if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+
       if (!fs.existsSync(filePath)) {
-        return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use list_dir to verify the file exists.`;
+        return `❌ Error: File not found at '${filePath}'.`;
       }
 
       const stat = fs.statSync(filePath);
@@ -296,17 +244,15 @@ export const tools = {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const answer = await rl.question(`\n⚠️  Delete ${filePath}? (Y/n) > `);
       rl.close();
-      
+
       if (answer.trim().toLowerCase() === "n") {
         return "🚫 Cancelled: Deletion denied by user.";
       }
-      
+
       fs.unlinkSync(filePath);
       return `✅ Success: Deleted '${filePath}'`;
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied for '${filePath}'.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
       return `❌ Error deleting file: ${err.message}`;
     }
   },
@@ -314,11 +260,12 @@ export const tools = {
   get_file_info: async ({ path: filePath }) => {
     try {
       console.log(`\nℹ️  [get_file_info] ${filePath}`);
-      
+      if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+
       if (!fs.existsSync(filePath)) {
-        return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use list_dir to explore available files.`;
+        return `❌ Error: File not found at '${filePath}'.`;
       }
-      
+
       const stat = fs.statSync(filePath);
       const info = {
         name: path.basename(filePath),
@@ -329,59 +276,48 @@ export const tools = {
         created: stat.birthtime.toISOString(),
         extension: path.extname(filePath) || "none",
       };
-      
+
       return `📋 File Information:\n${JSON.stringify(info, null, 2)}`;
     } catch (err) {
-      if (err.code === "EACCES") {
-        return `❌ Error: Permission denied for '${filePath}'.`;
-      }
+      if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
       return `❌ Error getting file info: ${err.message}`;
     }
   },
 
   run_command: async ({ cmd }) => {
-    if (!cmd || cmd.trim() === "") {
-      return "❌ Error: Command cannot be empty.";
-    }
+    if (!cmd || cmd.trim() === "") return "❌ Error: Command cannot be empty.";
 
     const isAllowed = await confirmExecution(cmd);
     if (!isAllowed) {
       console.log("🚫 [run_command] Denied by user.");
       return "🚫 Cancelled: User denied permission to run command.";
     }
-    
+
     try {
       console.log(`\n🚀 [run_command] ${cmd}`);
       const output = execSync(cmd, {
         shell: true,
         stdio: "pipe",
-        timeout: 60000,
-        maxBuffer: 1024 * 1024 * 10,
+        timeout: COMMAND_TIMEOUT_MS,
+        maxBuffer: COMMAND_MAX_BUFFER,
       });
-      
+
       const result = output.toString();
       if (!result || result.trim() === "") {
         return "✅ Success: Command executed (no output produced)";
       }
-      
-      return `✅ Success:\n${truncate(result, 5000)}`;
+
+      return `✅ Success:\n${truncate(result, MAX_COMMAND_OUTPUT_CHARS)}`;
     } catch (err) {
       const exitCode = err.status || "unknown";
       const stdout = err.stdout?.toString() || "";
       const stderr = err.stderr?.toString() || "";
-      
+
       let errorMsg = `❌ Error: Command failed (exit code: ${exitCode})\n\n`;
-      
-      if (stderr) {
-        errorMsg += `📛 Stderr:\n${truncate(stderr, 2000)}\n\n`;
-      }
-      
-      if (stdout) {
-        errorMsg += `📄 Stdout:\n${truncate(stdout, 2000)}`;
-      }
-      
+      if (stderr) errorMsg += `📛 Stderr:\n${truncate(stderr, 2000)}\n\n`;
+      if (stdout) errorMsg += `📄 Stdout:\n${truncate(stdout, 2000)}`;
       errorMsg += `\n\n💡 Tip: Check command syntax and permissions.`;
-      
+
       return errorMsg;
     }
   },

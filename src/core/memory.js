@@ -1,8 +1,7 @@
 import fs from "fs";
-import { ai } from "./llm.js";
-import { config } from "./config.js";
-
-const MEMORY_FILE = "memory.json";
+import { ai } from "../llm/llm.js";
+import { config } from "../config/config.js";
+import { MEMORY_FILE } from "../config/constants.js";
 
 // ===========================
 // 🔹 LOAD
@@ -19,15 +18,13 @@ export function loadMemory() {
 }
 
 // ===========================
-// 🔹 SAVE (SMART TRUNCATE)
+// 🔹 SAVE (with smart truncate via LLM summary)
 // ===========================
 export async function saveMemory(memory) {
   const maxTurns = config.maxMemoryTurns || 20;
-
   if (memory.length > maxTurns) {
     memory = await summarizeMemory(memory);
   }
-
   fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
 }
 
@@ -46,7 +43,6 @@ async function summarizeMemory(memory) {
   const oldMessages = memory.slice(0, -recentCount);
   const recentMessages = memory.slice(-recentCount);
 
-  // Extract text-only content from old messages for summarization
   const textParts = oldMessages
     .map((msg) => {
       const role = msg.role || "unknown";
@@ -61,10 +57,7 @@ async function summarizeMemory(memory) {
 
   if (!textParts.trim()) {
     return [
-      {
-        role: "user",
-        parts: [{ text: "[CONTEXT] Previous conversation history was cleared to save memory." }],
-      },
+      { role: "user", parts: [{ text: "[CONTEXT] Previous conversation history was cleared to save memory." }] },
       ...recentMessages,
     ];
   }
@@ -91,22 +84,17 @@ Respond with ONLY the summary paragraph, no extra formatting.`,
       config: { temperature: 0.1 },
     });
 
-    const summaryText = response?.candidates?.[0]?.content?.parts?.[0]?.text || "Previous conversation context was summarized.";
+    const summaryText = response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "Previous conversation context was summarized.";
 
     return [
-      {
-        role: "user",
-        parts: [{ text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }],
-      },
+      { role: "user", parts: [{ text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }] },
       ...recentMessages,
     ];
   } catch (err) {
     console.log(`⚠️ Memory summarization fallback: ${err.message}`);
     return [
-      {
-        role: "user",
-        parts: [{ text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }],
-      },
+      { role: "user", parts: [{ text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }] },
       ...recentMessages,
     ];
   }
