@@ -2,4 +2,12 @@ node_modules
 .env
 index.json
 memory.json
-chat.log
+chat.log-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
