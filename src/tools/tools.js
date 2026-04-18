@@ -5,12 +5,14 @@ import { spawn } from "child_process";
 import readline from "readline/promises";
 import { truncate, isSafePath } from "../utils/utils.js";
 import { classifyCommand } from "./command-classifier.js";
+import { renderDiff, diffStats } from "./diff.js";
 import {
   IGNORE_DIRS,
   BINARY_EXTS,
   MAX_TOOL_OUTPUT_CHARS,
   MAX_COMMAND_OUTPUT_CHARS,
   COMMAND_TIMEOUT_MS,
+  DIFF_AUTO_APPROVE_ENV,
 } from "../config/constants.js";
 
 // ===========================
@@ -132,14 +134,29 @@ export const tools = {
       }
 
       const newContent = content.replace(target, replacement);
+      const { added, removed } = diffStats(content, newContent);
+
+      // Show the diff preview (unless auto-approved via env var or non-TTY).
+      const autoApprove = process.env[DIFF_AUTO_APPROVE_ENV] === "1" || !process.stdin.isTTY;
+      if (!autoApprove) {
+        console.log(renderDiff(content, newContent, filePath));
+        console.log(`   📊 +${added} / -${removed} lines`);
+
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await rl.question(`Apply this change? (Y/n/e=edit manually) > `);
+        rl.close();
+        const ans = answer.trim().toLowerCase();
+        if (ans === "n") return "🚫 Cancelled: Edit rejected by user.";
+        if (ans === "e") {
+          return `🚫 Cancelled: User wants to edit manually. File '${filePath}' was NOT modified.\n💡 Tip: Make the change yourself, then tell the agent what you did.`;
+        }
+      }
+
       await fs.writeFile(filePath, newContent);
 
-      const tLines = target.split("\n").length;
-      const rLines = replacement.split("\n").length;
-      const delta = rLines - tLines;
-      const deltaStr = delta > 0 ? `+${delta}` : delta;
-
-      return `✅ Success: Edited ${filePath}\n   📝 Replaced ${tLines} lines → ${rLines} lines (${deltaStr})`;
+      const delta = added - removed;
+      const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+      return `✅ Success: Edited ${filePath}\n   📝 +${added} / -${removed} lines (net ${deltaStr})`;
     } catch (err) {
       if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
       return `❌ Error editing file: ${err.message}`;

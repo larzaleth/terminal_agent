@@ -3,21 +3,43 @@ import chalk from "chalk";
 import { COST_REPORT_FILE } from "../config/constants.js";
 
 // ===========================
-// 🔹 PRICING (per 1K tokens)
+// 🔹 PRICING (per 1K tokens, USD)
+// Sources: Google AI Studio, OpenAI, Anthropic pricing pages (Jan 2026).
 // ===========================
 const PRICING = {
-  "gemini-2.5-flash": {
-    input: 0.00001875,  // $0.01875 per 1M tokens
-    output: 0.000075,   // $0.075 per 1M tokens
-  },
-  "gemini-2.0-flash": {
-    input: 0.00001,
-    output: 0.00004,
-  },
-  "text-embedding-004": {
-    input: 0.00001,
-  },
+  // Gemini
+  "gemini-2.5-flash": { input: 0.00001875, output: 0.000075 },
+  "gemini-2.0-flash": { input: 0.00001, output: 0.00004 },
+  "gemini-1.5-flash": { input: 0.0000075, output: 0.00003 },
+  "gemini-1.5-pro": { input: 0.00125, output: 0.005 },
+  "text-embedding-004": { input: 0.00001 },
+
+  // OpenAI
+  "gpt-4o": { input: 0.0025, output: 0.01 },
+  "gpt-4o-mini": { input: 0.00015, output: 0.0006 },
+  "gpt-4.1": { input: 0.002, output: 0.008 },
+  "gpt-4.1-mini": { input: 0.0004, output: 0.0016 },
+  "o1": { input: 0.015, output: 0.06 },
+  "o1-mini": { input: 0.003, output: 0.012 },
+  "o3-mini": { input: 0.0011, output: 0.0044 },
+  "text-embedding-3-small": { input: 0.00002 },
+  "text-embedding-3-large": { input: 0.00013 },
+
+  // Anthropic
+  "claude-3-5-sonnet-latest": { input: 0.003, output: 0.015 },
+  "claude-3-5-sonnet-20241022": { input: 0.003, output: 0.015 },
+  "claude-3-5-haiku-latest": { input: 0.0008, output: 0.004 },
+  "claude-3-opus-latest": { input: 0.015, output: 0.075 },
 };
+
+function pricingFor(model) {
+  if (PRICING[model]) return PRICING[model];
+  // Fuzzy match by prefix for unknown variants.
+  for (const key of Object.keys(PRICING)) {
+    if (model?.startsWith(key)) return PRICING[key];
+  }
+  return PRICING["gemini-2.5-flash"]; // safe default for unknown models
+}
 
 // Fallback char→token ratio ONLY used when the API did not return usageMetadata.
 // Real counts come from response.usageMetadata (populated by Gemini).
@@ -90,12 +112,12 @@ export class CostTracker {
   }
 
   calculateCost(model) {
-    const pricing = PRICING[model] || PRICING["gemini-2.5-flash"];
+    const pricing = pricingFor(model);
     const generationCost =
       (this.usage.generation.inputTokens / 1000) * pricing.input +
-      (this.usage.generation.outputTokens / 1000) * pricing.output;
+      (this.usage.generation.outputTokens / 1000) * (pricing.output ?? pricing.input);
 
-    const embeddingPricing = PRICING["text-embedding-004"];
+    const embeddingPricing = pricingFor("text-embedding-004");
     const embeddingCost = (this.usage.embeddings.tokens / 1000) * embeddingPricing.input;
 
     return {

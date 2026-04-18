@@ -1,32 +1,37 @@
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
 import { getGlobalEnvPath } from "../config/config.js";
+import { getProvider } from "./providers/index.js";
 
-// Load from global ~/.myagent.env (idempotent — dotenv is safe to call twice,
-// but we guard to avoid re-parsing on hot reloads).
+// Idempotent env loader — guards against double-parse.
 let _loaded = false;
 function ensureEnvLoaded() {
   if (_loaded) return;
   dotenv.config({ path: getGlobalEnvPath() });
+  dotenv.config(); // also merge local .env if present
   _loaded = true;
 }
-
 ensureEnvLoaded();
 
-// Lazy singleton — GoogleGenAI is only constructed on first use to allow
-// setupApiKey() in the CLI to inject the key before any LLM call.
-let _ai = null;
-export function getAI() {
-  if (!_ai) {
-    ensureEnvLoaded();
-    _ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+/**
+ * Backwards-compatible proxy so older call-sites that do `ai.models.embedContent(...)`
+ * or `ai.models.generateContentStream(...)` keep working — it routes through the
+ * Gemini provider. New code should use `getProvider(name)` directly.
+ */
+export const ai = new Proxy(
+  {},
+  {
+    get(_t, prop) {
+      if (prop === "models") {
+        const g = getProvider("gemini");
+        return {
+          generateContent: (opts) => g.client.models.generateContent(opts),
+          generateContentStream: (opts) => g.client.models.generateContentStream(opts),
+          embedContent: (opts) => g.client.models.embedContent(opts),
+        };
+      }
+      return undefined;
+    },
   }
-  return _ai;
-}
+);
 
-// Proxy so existing `import { ai }` call-sites keep working without changes.
-export const ai = new Proxy({}, {
-  get(_t, prop) {
-    return getAI()[prop];
-  },
-});
+export { getProvider };

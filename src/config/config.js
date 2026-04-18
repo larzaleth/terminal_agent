@@ -12,11 +12,13 @@ import {
 // 🔹 DEFAULT CONFIG
 // ===========================
 const defaultConfig = {
+  provider: "gemini",
   model: "gemini-2.5-flash",
   plannerModel: "gemini-2.5-flash",
   summaryModel: "gemini-2.5-flash",
   maxIterations: MAX_ITERATIONS_DEFAULT,
   maxMemoryTurns: MAX_MEMORY_TURNS_DEFAULT,
+  mcpServers: {},
 };
 
 // ===========================
@@ -86,8 +88,26 @@ export function getGlobalEnvPath() {
 }
 
 // Backwards-compatible named export for existing call-sites.
-export const config = new Proxy({}, {
-  get(_target, prop) {
-    return loadConfig()[prop];
-  },
-});
+// The Proxy now supports both reads AND writes — `/model` and `/provider`
+// commands mutate the session's config in-memory (not persisted to disk).
+export const config = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      return loadConfig()[prop];
+    },
+    set(_target, prop, value) {
+      loadConfig()[prop] = value;
+      return true;
+    },
+    has(_target, prop) {
+      return prop in loadConfig();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(loadConfig());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      return Object.getOwnPropertyDescriptor(loadConfig(), prop);
+    },
+  }
+);

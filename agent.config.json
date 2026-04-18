@@ -1,7 +1,9 @@
 {
+  "provider": "gemini",
   "model": "gemini-2.5-flash",
-  "plannerModel": "gemini-2.0-flash",
-  "summaryModel": "gemini-2.0-flash",
+  "plannerModel": "gemini-2.5-flash",
+  "summaryModel": "gemini-2.5-flash",
   "maxIterations": 25,
-  "maxMemoryTurns": 20
+  "maxMemoryTurns": 20,
+  "mcpServers": {}
 }

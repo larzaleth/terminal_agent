@@ -38,6 +38,9 @@ export const COMMAND_MAX_BUFFER = 1024 * 1024 * 10;
 // Planner skip heuristic — cheap short requests don't need a plan.
 export const PLANNER_MIN_WORDS = 15;
 
+// Diff preview: skip confirmation when stdin isn't a TTY or env var says so.
+export const DIFF_AUTO_APPROVE_ENV = "MYAGENT_AUTO_APPROVE_EDITS";
+
 // Directories & extensions to ignore when walking the filesystem.
 export const IGNORE_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next",

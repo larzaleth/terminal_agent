@@ -8,6 +8,7 @@ import { getGlobalEnvPath, loadConfig } from "../src/config/config.js";
 import { handleSlashCommand } from "../src/commands/slash.js";
 import { runAgent } from "../src/core/agents.js";
 import { globalTracker } from "../src/llm/cost-tracker.js";
+import { shutdownMcp } from "../src/mcp/client.js";
 
 // ===========================
 // 🔑 API KEY SETUP (saved with restrictive permissions)
@@ -56,8 +57,9 @@ async function main() {
   showBanner();
 
   // Graceful shutdown
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     console.log(chalk.dim("\n\n👋 Goodbye!\n"));
+    await shutdownMcp().catch(() => {});
     rl.close();
     process.exit(0);
   });
@@ -70,6 +72,7 @@ async function main() {
     if (!trimmed) continue;
     if (trimmed === "exit" || trimmed === "quit") {
       console.log(chalk.dim("\n👋 Goodbye!\n"));
+      await shutdownMcp().catch(() => {});
       rl.close();
       process.exit(0);
     }

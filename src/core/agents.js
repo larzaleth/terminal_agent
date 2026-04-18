@@ -1,19 +1,19 @@
 import pLimit from "p-limit";
-import { ai } from "../llm/llm.js";
-import { tools, toolDeclarations } from "../tools/tools.js";
+import { tools as builtinTools, toolDeclarations as builtinDecls } from "../tools/tools.js";
 import { loadMemory, saveMemory } from "./memory.js";
 import { loadIndex, search, buildContext } from "../rag/semantic.js";
 import { createPlan } from "./planner.js";
-import { config, getSystemPrompt } from "../config/config.js";
+import { loadConfig, getSystemPrompt } from "../config/config.js";
 import { retry, isReadOnlyTool } from "../utils/utils.js";
 import { globalTracker } from "../llm/cost-tracker.js";
+import { getProvider } from "../llm/providers/index.js";
+import { toJsonSchemaTools } from "../llm/providers/base.js";
 import { TOOL_CONCURRENCY } from "../config/constants.js";
+import { getMcpTools } from "../mcp/client.js";
 
 /**
- * Main agent loop with streaming, parallel tool execution, and retry logic.
- *
- * @param {string} userInput - The user's request
- * @param {object} callbacks - Event callbacks for UI integration
+ * Main agent loop — provider-agnostic, streaming, parallel tool execution,
+ * retry logic, MCP tool merge.
  */
 export async function runAgent(userInput, callbacks = {}) {
   const {
@@ -26,11 +26,24 @@ export async function runAgent(userInput, callbacks = {}) {
     onError = () => {},
   } = callbacks;
 
+  const config = loadConfig();
+  const providerName = config.provider || "gemini";
+  const provider = getProvider(providerName);
   const agentModel = config.model;
-  const memory = loadMemory();
   const systemInstruction = getSystemPrompt();
 
-  // ─── STEP 1: LLM-POWERED PLAN (auto-skipped for short requests) ───
+  // ─── Merge built-in tools with any connected MCP tools ──────────────
+  const mcpTools = await getMcpTools(); // { decls: [...], handler(name, args) }
+  const allDecls = [...builtinDecls, ...mcpTools.decls];
+  const toolSchemas = toJsonSchemaTools(allDecls);
+  const dispatchTool = async (name, args) => {
+    if (builtinTools[name]) return builtinTools[name](args);
+    if (mcpTools.has(name)) return mcpTools.handler(name, args);
+    return `Error: Unknown tool ${name}`;
+  };
+
+  // ─── STEP 1: Plan (auto-skipped for short requests) ─────────────────
+  const memory = loadMemory();
   onThinking();
   let plan;
   try {
@@ -41,7 +54,7 @@ export async function runAgent(userInput, callbacks = {}) {
     onPlan(plan);
   }
 
-  // ─── STEP 2: RAG CONTEXT SEARCH ───
+  // ─── STEP 2: RAG context ────────────────────────────────────────────
   let context = "";
   try {
     const index = loadIndex();
@@ -50,17 +63,16 @@ export async function runAgent(userInput, callbacks = {}) {
       context = buildContext(results);
     }
   } catch {
-    // RAG is optional, continue without context
+    /* RAG optional */
   }
 
-  // ─── STEP 3: INJECT USER MESSAGE WITH CONTEXT ───
   const userMessage = context
     ? `User request:\n${userInput}\n\nRelevant code context:\n${context}\n\nFollow existing code patterns strictly.`
     : userInput;
 
-  memory.push({ role: "user", parts: [{ text: userMessage }] });
+  memory.push({ role: "user", blocks: [{ type: "text", text: userMessage }] });
 
-  // ─── STEP 4: AGENT LOOP (STREAMING) ───
+  // ─── STEP 3: Agent loop ─────────────────────────────────────────────
   let isDone = false;
   let finalResponse = "";
   let iterations = 0;
@@ -72,99 +84,89 @@ export async function runAgent(userInput, callbacks = {}) {
     onThinking();
 
     let streamedText = "";
-    const functionCalls = [];
-    let usageMetadata = null;
+    const toolCalls = [];
+    let usage = null;
 
     try {
       const stream = await retry(() =>
-        ai.models.generateContentStream({
+        provider.stream({
           model: agentModel,
-          contents: memory,
-          config: {
-            systemInstruction,
-            tools: [{ functionDeclarations: toolDeclarations }],
-          },
+          systemInstruction,
+          messages: memory,
+          tools: toolSchemas,
         })
       );
 
-      for await (const chunk of stream) {
-        const parts = chunk.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-          if (part.text) {
-            streamedText += part.text;
-            onText(part.text);
-          }
-          if (part.functionCall) functionCalls.push(part);
+      for await (const evt of stream) {
+        if (evt.type === "text") {
+          streamedText += evt.text;
+          onText(evt.text);
+        } else if (evt.type === "tool_call") {
+          toolCalls.push(evt);
+        } else if (evt.type === "usage") {
+          usage = evt;
         }
-        // Gemini emits usageMetadata on the final chunk — overwrite so the
-        // last non-null wins.
-        if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
       }
     } catch (err) {
       onError(err);
       break;
     }
 
-    // Use exact token counts from the API when available — char-based
-    // estimation is only a fallback.
-    if (usageMetadata) {
-      globalTracker.trackGeneration(agentModel, usageMetadata);
+    // Track tokens — use API-reported counts when available.
+    if (usage) {
+      globalTracker.trackGeneration(agentModel, {
+        promptTokenCount: usage.inputTokens,
+        candidatesTokenCount: usage.outputTokens,
+      });
     } else {
       globalTracker.trackGeneration(agentModel, "", streamedText);
     }
 
-    // Build model message for memory
-    const modelParts = [];
-    if (streamedText) modelParts.push({ text: streamedText });
-    modelParts.push(...functionCalls);
+    // Build assistant message from this turn's output.
+    const blocks = [];
+    if (streamedText) blocks.push({ type: "text", text: streamedText });
+    for (const tc of toolCalls) {
+      blocks.push({ type: "tool_call", id: tc.id, name: tc.name, args: tc.args });
+    }
+    if (blocks.length === 0) break;
 
-    if (modelParts.length === 0) break;
-    memory.push({ role: "model", parts: modelParts });
+    memory.push({ role: "assistant", blocks });
     finalResponse += streamedText;
 
-    // ─── EXECUTE TOOL CALLS ───
-    if (functionCalls.length > 0) {
-      const responses = [];
-
-      const readCalls = functionCalls.filter((fc) => isReadOnlyTool(fc.functionCall.name));
-      const writeCalls = functionCalls.filter((fc) => !isReadOnlyTool(fc.functionCall.name));
-
-      // ⚡ Read-only tools in parallel — concurrency-capped to avoid 429s.
-      if (readCalls.length > 0) {
-        const readResults = await Promise.all(
-          readCalls.map((fc) => toolLimit(async () => {
-            const { name, args } = fc.functionCall;
-            onToolCall(name, args);
-            const handler = tools[name];
-            if (!handler) {
-              return { functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } };
-            }
-            const result = await handler(args);
-            onToolResult(name, typeof result === "string" ? result.slice(0, 100) : "done");
-            return { functionResponse: { name, response: { result } } };
-          }))
-        );
-        responses.push(...readResults);
-      }
-
-      // 🔒 Write tools sequentially.
-      for (const fc of writeCalls) {
-        const { name, args } = fc.functionCall;
-        onToolCall(name, args);
-        const handler = tools[name];
-        if (!handler) {
-          responses.push({ functionResponse: { name, response: { result: `Error: Unknown tool ${name}` } } });
-          continue;
-        }
-        const result = await handler(args);
-        onToolResult(name, typeof result === "string" ? result.slice(0, 100) : "done");
-        responses.push({ functionResponse: { name, response: { result } } });
-      }
-
-      memory.push({ role: "user", parts: responses });
-    } else {
+    if (toolCalls.length === 0) {
       isDone = true;
+      continue;
     }
+
+    // ─── EXECUTE TOOL CALLS ─────────────────────────────────────────
+    const readCalls = toolCalls.filter((tc) => isReadOnlyTool(tc.name));
+    const writeCalls = toolCalls.filter((tc) => !isReadOnlyTool(tc.name));
+    const resultBlocks = [];
+
+    // Read-only: parallel (capped concurrency)
+    if (readCalls.length > 0) {
+      const results = await Promise.all(
+        readCalls.map((tc) =>
+          toolLimit(async () => {
+            onToolCall(tc.name, tc.args);
+            const result = await dispatchTool(tc.name, tc.args);
+            onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
+            return { type: "tool_result", id: tc.id, name: tc.name, output: String(result) };
+          })
+        )
+      );
+      resultBlocks.push(...results);
+    }
+
+    // Writes: sequential
+    for (const tc of writeCalls) {
+      onToolCall(tc.name, tc.args);
+      const result = await dispatchTool(tc.name, tc.args);
+      onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
+      resultBlocks.push({ type: "tool_result", id: tc.id, name: tc.name, output: String(result) });
+    }
+
+    memory.push({ role: "tool", blocks: resultBlocks });
   }
 
   if (iterations >= maxIterations) {

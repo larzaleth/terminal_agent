@@ -1,23 +1,121 @@
-# terminal_agent
-WALKTHROUGH
+# AI Coding Agent (myagent)
 
-Setup API Key Global
-Fitur keliling (portabilitas mesin) pada agen CLI Anda sudah berhasil diterapkan! Anda kini bisa mempublikasikan source code aplikasi agen ini di GitHub, melakukan git clone di mesin baru, dan menjalankannya tanpa pusing mengatur GEMINI_API_KEY secara manual.
+A terminal-based AI coding agent with RAG, streaming, multi-provider support, and MCP tool integration.
 
-🌟 Cara Kerja Setup Interaktif
-Saat Anda pertama kali menjalankan perintah myagent di PC atau laptop baru:
+## ✨ Features
 
-Skrip akan mencek nilai GEMINI_API_KEY di mesin.
-Jika tidak ditemukan, agen langsung mem-pause proses loading internal dan memunculkan prompt terminal: 🔑 Masukkan Gemini API Key (dapatkan di https://aistudio.google.com):
-Setelah Anda paste dan tekan Enter, nilai tersebut langsung di-save ke dalam file rahasia Global OS Anda: ~/.myagent.env (Misalnya di C:\Users\NamaAnda\.myagent.env atau /Users/Mac/.myagent.env).
-Kunci otomatis dimuat ulang untuk membiarkan session CLI berjalan mulus tanpa error.
-Pada run selanjutnya, Anda tidak akan pernah ditanyai API Key lagi karena key tersebut otomatis dimuat dari profil global Anda di mesin itu!
-TIP
+- 🤖 **Multi-provider LLM** — Gemini, OpenAI, Anthropic (switch on-the-fly with `/model`)
+- 🔌 **MCP (Model Context Protocol)** — plug in external tool servers (GitHub, MySQL, filesystem, …)
+- 🔍 **Smart RAG** — line-based semantic index with pre-normalized embeddings
+- ✏️ **Interactive diff preview** — review every edit before it lands on disk
+- 💰 **Accurate cost tracking** — uses real `usageMetadata` from each provider
+- 🛡️ **Safety by default** — path traversal blocked, dangerous commands refused, safe commands auto-approved
+- 🧠 **LLM-powered memory summarization** — context stays fresh without ballooning token cost
+- 📝 **Session transcript export** — `/save` produces a clean markdown log
 
-Cara Distribusi ke Mesin Lain:
+## 🚀 Install
 
-Clone repository GitHub Anda: git clone https://...
-Pindah ke direktori: cd terminal_agent
-Daftarkan terminal command global: npm link
-Ketik: myagent
-Agen akan menuntun Anda memasukkan API Key secara mandiri. File konfigurasi (.env) tak perlu disertakan ke Github karena sekarang ia bisa menginisiasi profil keamanannya secara cerdas!
+```bash
+git clone <this-repo>
+cd ai-coding-agent
+yarn install
+npm link          # registers `myagent` globally
+myagent           # first run will prompt for your API key
+```
+
+## 🔑 Environment variables
+
+The first `myagent` run prompts for a Gemini key and saves it to `~/.myagent.env`.
+For other providers, add to `~/.myagent.env` or a local `.env`:
+
+```env
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...       # optional, for /provider openai
+ANTHROPIC_API_KEY=...    # optional, for /provider anthropic
+```
+
+## 🎮 Slash commands
+
+| Command | Description |
+| --- | --- |
+| `/help` | List all commands |
+| `/clear` | Clear conversation memory |
+| `/index <folder>` | Build semantic index of a folder |
+| `/config` | Show active configuration |
+| `/model [id]` | Show or switch model (`gpt-4o-mini`, `claude-3-5-haiku-latest`, `gemini-2.0-flash`, …) |
+| `/provider [name]` | Switch LLM provider (`gemini`, `openai`, `anthropic`) |
+| `/cache [stats\|clear\|clean]` | Cache management |
+| `/cost [report\|history\|reset]` | Cost tracking |
+| `/save [file]` | Export session transcript to markdown |
+| `/mcp [stop]` | List or stop MCP server connections |
+| `exit` / `quit` | Leave the agent |
+
+## ⚙️ Configuration (`agent.config.json`)
+
+```json
+{
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "plannerModel": "gemini-2.5-flash",
+  "summaryModel": "gemini-2.5-flash",
+  "maxIterations": 25,
+  "maxMemoryTurns": 20,
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+    }
+  }
+}
+```
+
+MCP tools appear to the agent as `serverName.toolName` (e.g. `github.create_issue`). They're merged with the built-in tools transparently.
+
+## 🧪 Development
+
+```bash
+yarn test           # 36 unit tests via node:test
+yarn lint           # ESLint (flat config)
+yarn format         # Prettier
+```
+
+## 🏗️ Architecture
+
+```
+bin/cli.js                 # entrypoint
+src/
+├── core/
+│   ├── agents.js          # provider-agnostic agent loop
+│   ├── memory.js          # load/save/summarize (auto-migrates legacy format)
+│   ├── planner.js         # short-request auto-skip
+│   └── transcript.js      # markdown export
+├── llm/
+│   ├── llm.js             # legacy compat + provider router
+│   ├── cost-tracker.js    # multi-provider pricing + usageMetadata
+│   └── providers/
+│       ├── base.js        # interface + schema converter
+│       ├── gemini.js
+│       ├── openai.js
+│       └── anthropic.js
+├── rag/
+│   ├── semantic.js        # line-based chunking, pre-normalized vectors
+│   └── cache.js           # TTL + LRU eviction
+├── mcp/
+│   └── client.js          # stdio MCP client, tool merging
+├── tools/
+│   ├── tools.js           # file ops + run_command (spawn, streaming)
+│   ├── command-classifier.js  # block/auto/confirm
+│   └── diff.js            # colored unified diff
+├── commands/slash.js      # /help /model /save /mcp …
+├── config/{config.js,constants.js}
+└── utils/utils.js
+```
+
+## 📜 License
+
+MIT

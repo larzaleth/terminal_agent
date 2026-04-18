@@ -1,26 +1,60 @@
 import fs from "fs";
-import { ai } from "../llm/llm.js";
-import { config } from "../config/config.js";
+import { getProvider } from "../llm/providers/index.js";
+import { loadConfig } from "../config/config.js";
 import { MEMORY_FILE } from "../config/constants.js";
 
 // ===========================
-// 🔹 LOAD
+// 🔹 LOAD (with auto-migration from legacy Gemini {role, parts} format)
 // ===========================
 export function loadMemory() {
   if (!fs.existsSync(MEMORY_FILE)) return [];
   try {
-    const data = fs.readFileSync(MEMORY_FILE, "utf-8");
-    if (!data.trim()) return [];
-    return JSON.parse(data);
+    const raw = fs.readFileSync(MEMORY_FILE, "utf-8");
+    if (!raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    return parsed.map(migrateMessage).filter(Boolean);
   } catch {
     return [];
   }
+}
+
+// Normalize any historical Gemini-style message to the neutral {role, blocks} form.
+function migrateMessage(msg) {
+  if (!msg) return null;
+  if (Array.isArray(msg.blocks)) return msg; // already normalized
+
+  if (Array.isArray(msg.parts)) {
+    const blocks = [];
+    for (const p of msg.parts) {
+      if (p.text) blocks.push({ type: "text", text: p.text });
+      else if (p.functionCall) {
+        blocks.push({
+          type: "tool_call",
+          id: p.functionCall.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+          name: p.functionCall.name,
+          args: p.functionCall.args || {},
+        });
+      } else if (p.functionResponse) {
+        blocks.push({
+          type: "tool_result",
+          id: p.functionResponse.id || "legacy",
+          name: p.functionResponse.name,
+          output: String(p.functionResponse.response?.result ?? ""),
+        });
+      }
+    }
+    const role = msg.role === "model" ? "assistant" : msg.role === "user" ? (blocks.some((b) => b.type === "tool_result") ? "tool" : "user") : msg.role;
+    return { role, blocks };
+  }
+
+  return null;
 }
 
 // ===========================
 // 🔹 SAVE (with smart truncate via LLM summary)
 // ===========================
 export async function saveMemory(memory) {
+  const config = loadConfig();
   const maxTurns = config.maxMemoryTurns || 20;
   if (memory.length > maxTurns) {
     memory = await summarizeMemory(memory);
@@ -39,6 +73,7 @@ export function clearMemory() {
 // 🔥 LLM-POWERED SUMMARIZATION
 // ===========================
 async function summarizeMemory(memory) {
+  const config = loadConfig();
   const recentCount = 10;
   const oldMessages = memory.slice(0, -recentCount);
   const recentMessages = memory.slice(-recentCount);
@@ -46,9 +81,9 @@ async function summarizeMemory(memory) {
   const textParts = oldMessages
     .map((msg) => {
       const role = msg.role || "unknown";
-      const texts = (msg.parts || [])
-        .filter((p) => p.text)
-        .map((p) => p.text)
+      const texts = (msg.blocks || [])
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
         .join("\n");
       return texts ? `[${role}]: ${texts}` : null;
     })
@@ -57,44 +92,32 @@ async function summarizeMemory(memory) {
 
   if (!textParts.trim()) {
     return [
-      { role: "user", parts: [{ text: "[CONTEXT] Previous conversation history was cleared to save memory." }] },
+      { role: "user", blocks: [{ type: "text", text: "[CONTEXT] Previous conversation history was cleared to save memory." }] },
       ...recentMessages,
     ];
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: config.summaryModel,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Summarize this conversation history into a concise context paragraph.
+    const provider = getProvider(config.provider || "gemini");
+    const prompt = `Summarize this conversation history into a concise context paragraph.
 Focus on: what was discussed, what files were modified, what decisions were made, and any important patterns or conventions discovered.
 
 Conversation:
 ${textParts.slice(0, 4000)}
 
-Respond with ONLY the summary paragraph, no extra formatting.`,
-            },
-          ],
-        },
-      ],
-      config: { temperature: 0.1 },
-    });
+Respond with ONLY the summary paragraph, no extra formatting.`;
 
-    const summaryText = response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+    const summaryText = (await provider.generate({ model: config.summaryModel, prompt })) ||
       "Previous conversation context was summarized.";
 
     return [
-      { role: "user", parts: [{ text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }] },
+      { role: "user", blocks: [{ type: "text", text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }] },
       ...recentMessages,
     ];
   } catch (err) {
     console.log(`⚠️ Memory summarization fallback: ${err.message}`);
     return [
-      { role: "user", parts: [{ text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }] },
+      { role: "user", blocks: [{ type: "text", text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }] },
       ...recentMessages,
     ];
   }
