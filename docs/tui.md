@@ -1,0 +1,181 @@
+# TUI Mode (Ink-based UI)
+
+`myagent` ships with a rich terminal UI powered by [Ink](https://github.com/vadimdemedes/ink) — React for the CLI.
+When you launch in an interactive terminal, you get the full TUI. In non-TTY environments (CI, piped input, Docker logs), it gracefully falls back to the classic readline REPL.
+
+## Layout
+
+```
+╭────────────────────────────────────────────────────────────────╮
+│ 🤖 AI Coding Agent  v2.4       gemini:gemini-2.5-flash  │  $0… │  ← Header
+╰────────────────────────────────────────────────────────────────╯
+                                           ╭───────────────────╮
+🧑 You                                     │   Session         │
+refactor utils.js                          │ ────────────────  │
+                                           │ Provider   gemini │
+🤖 Assistant                               │ Model      flash  │
+I'll read the file first.                  │                   │
+  ▼ 📄 read_file(path=utils.js)  ✓         │   Activity        │
+  ╭──────────────────────────────╮         │ ● idle            │
+  │  args: { "path": "utils.js" } │         │                   │
+  │  result:                      │         │   Cost            │
+  │  1: export function main...   │         │ Spent   $0.0001  │
+  ╰──────────────────────────────╯         │ Tokens      145   │
+                                           │ Cache       67%   │
+ ▶ ✏️ edit_file(path=utils.js)  ✓           │                   │
+                                           ╰───────────────────╯
+╭────────────────────────────────────────────────────────────────╮
+│ 🧑 > _                                                         │  ← Input
+╰────────────────────────────────────────────────────────────────╯
+  Enter send  ↑ focus tool blocks  Ctrl+L clear  /help commands     ← Footer
+```
+
+**Panes:**
+- **Header** — app name, provider:model, session cost, iteration counter
+- **Messages (left)** — scrollable chat history with finalized turns in the terminal scrollback
+- **Sidebar (right)** — live session status: provider, current activity, recent tools, cost, MCP servers
+- **Input / Prompt (middle-bottom)** — text input box OR contextual prompt (diff review, confirmation)
+- **Footer** — dynamic keyboard hints based on state
+
+## Keyboard Shortcuts
+
+### Normal mode (input is active)
+- `Enter` — send message
+- `↑` / `↓` — focus previous/next tool block in the current turn
+- `Space` / `Enter` (when a tool is focused) — toggle expand/collapse
+- `Ctrl+L` — clear history (memory kept, visual reset)
+- `Ctrl+C` — exit
+- `Tab` — (planned) autocomplete slash commands
+
+### Diff preview (edit_file approval)
+- `a` / `Enter` — approve the edit
+- `r` / `Esc` — reject
+- `e` — "I'll edit manually" (cancels agent's edit)
+
+### Confirmation prompt (run_command, delete_file)
+- `y` / `Enter` — allow
+- `n` / `Esc` — deny
+
+## Tool Execution Live Panel
+
+Every tool call the agent makes appears as an expandable block inline with the assistant's response:
+
+```
+  ▶ 🔍 grep_search(pattern=TODO)  ✓
+```
+
+`▶` = collapsed. Arrow up/down to focus, Space to expand:
+
+```
+  ▼ 🔍 grep_search(pattern=TODO)  ✓
+  ╭───────────────────────────╮
+  │  args: { "pattern": "TODO" } │
+  │  result:                     │
+  │  src/a.js:14: // TODO fix... │
+  │  src/b.js:7:  // TODO later  │
+  ╰───────────────────────────╯
+```
+
+Status icons:
+- `⠋` (spinner) — tool is running
+- `✓` (green) — completed successfully
+- `✗` (red) — failed
+
+## Interactive Diff Preview
+
+When the agent proposes an `edit_file` change, the input area transforms into a diff review pane:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║ ✏️  Proposed edit: src/utils.js                              ║
+║    +1 / -1 lines                                             ║
+║                                                              ║
+║ --- src/utils.js (before)                                    ║
+║ +++ src/utils.js (after)                                     ║
+║ - function hello() {                                         ║
+║ + async function hello() {                                   ║
+║     return "world";                                          ║
+║   }                                                          ║
+║                                                              ║
+║ [a] approve   [r] reject   [e] edit manually                 ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+Press a key — no Enter required. The agent resumes (or cancels) instantly.
+
+## Hybrid Mode Detection
+
+| Environment | Mode |
+|---|---|
+| Interactive terminal (`process.stdin.isTTY && process.stdout.isTTY`) | Ink TUI |
+| Non-TTY (pipe, redirect, CI) | Readline REPL |
+| `MYAGENT_NO_TUI=1` | Readline REPL (forced) |
+| `--no-tui` flag | Readline REPL (forced) |
+| `--tui` flag | Ink TUI (forced) |
+
+Readline mode is the same UX as previous versions — streaming text, spinner, slash commands, all work identically.
+
+## Disabling the TUI
+
+If the TUI misbehaves on your terminal (rare, but possible on niche emulators):
+
+```bash
+# One-off
+myagent --no-tui
+
+# Permanent
+echo 'export MYAGENT_NO_TUI=1' >> ~/.bashrc
+```
+
+Or pipe output to force readline mode:
+
+```bash
+myagent 2>&1 | tee session.log
+```
+
+## Known Limitations
+
+- **Scrollback across turns.** Ink uses `<Static>` to commit finalized messages to terminal scrollback — you can scroll up after the session ends. The currently in-progress turn is dynamic and won't scroll until committed.
+- **No mouse support** — by design, pure keyboard for better SSH/tmux compat.
+- **Tab autocomplete** not yet implemented — tracked for a future release.
+- **Very narrow terminals (< 80 cols)** — sidebar is hidden or wrapped awkwardly; prefer ≥ 100 cols.
+- **Running console.log from deep code paths is suppressed** in TUI mode to avoid clobbering the UI. Tool activity surfaces via ToolCallBlock instead. If you're debugging, use `--no-tui` to see raw output.
+
+## Architecture Notes
+
+The TUI lives in `src/ui/`:
+
+```
+src/ui/
+├── App.js                    # root component + reducer
+├── run.js                    # render entrypoint
+├── prompter.js               # pluggable user-confirmation interface
+├── h.js                      # React createElement alias
+└── components/
+    ├── Header.js
+    ├── Sidebar.js
+    ├── MessageList.js        # uses Ink's <Static> for scrollback
+    ├── Message.js
+    ├── ToolCallBlock.js      # expandable tool call widget
+    ├── DiffPrompt.js         # interactive diff with keyboard shortcuts
+    ├── ConfirmPrompt.js      # y/n confirmation
+    ├── InputBox.js           # text input via ink-text-input
+    └── Footer.js             # dynamic keyboard hints
+```
+
+The agent loop (`src/core/agents.js`) emits events via its existing callback API. The `App` reducer dispatches those events to UI state — no rewrite of agent core needed.
+
+Tool handlers that used to prompt via readline (`edit_file`, `delete_file`, `run_command`) now call `getPrompter().confirm()` / `editApproval()`. Readline mode supplies the default implementations; TUI mode overrides them via `setPrompter()` to return Promises resolved by user keypresses in `DiffPrompt` / `ConfirmPrompt`.
+
+For deeper architecture see [architecture.md](./architecture.md).
+
+## Testing
+
+UI components are unit-tested using `ink-testing-library`:
+
+```bash
+yarn test                             # all 45 tests (36 core + 9 UI)
+node --test tests/ui/                 # UI components only
+```
+
+Tests render each component, assert on the frame output (stripped of ANSI codes), then unmount to release the renderer.

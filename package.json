@@ -1,6 +1,6 @@
 {
   "name": "ai-coding-agent",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "A terminal-based AI coding agent powered by Google Gemini, featuring RAG, streaming, smart planning, and cost tracking.",
   "type": "module",
   "bin": {
@@ -35,14 +35,20 @@
     "chalk": "^5.4.1",
     "diff": "^9.0.0",
     "dotenv": "^17.3.1",
+    "htm": "^3.1.1",
+    "ink": "^5.2.1",
+    "ink-spinner": "^5",
+    "ink-text-input": "^6",
     "openai": "^6.34.0",
     "ora": "^8.2.0",
-    "p-limit": "^7.1.1"
+    "p-limit": "^7.1.1",
+    "react": "^18.3.1"
   },
   "devDependencies": {
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.0.0",
     "globals": "^15.0.0",
+    "ink-testing-library": "^4.0.0",
     "prettier": "^3.0.0"
   }
 }

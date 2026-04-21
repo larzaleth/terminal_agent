@@ -8,10 +8,11 @@ A terminal-based AI coding agent with multi-provider LLM support, semantic RAG, 
 
 ## ✨ Features
 
+- 🎨 **Rich TUI** (Ink-based) with multi-pane layout, expandable tool blocks, and interactive diff review — auto-falls-back to readline REPL for non-TTY
 - 🤖 **Multi-provider LLM** — Gemini, OpenAI, Anthropic (switch on-the-fly with `/model`)
 - 🔌 **MCP (Model Context Protocol)** — plug in GitHub, MySQL, filesystem, and other tool servers
 - 🔍 **Smart RAG** — line-based semantic chunking with pre-normalized embeddings
-- ✏️ **Interactive diff preview** — review every edit before it lands on disk
+- ✏️ **Interactive diff preview** — review every edit before it lands on disk (keyboard nav: a/r/e)
 - 💰 **Accurate cost tracking** — uses real `usageMetadata` from each provider
 - 🛡️ **Safety by default** — path traversal blocked, dangerous commands refused, safe commands auto-approved
 - 🧠 **LLM-powered memory summarization** — context stays fresh without ballooning token cost
@@ -42,6 +43,7 @@ myagent             # first run prompts for your Gemini API key
 | Install & first run | [docs/getting-started.md](./docs/getting-started.md) |
 | Config reference | [docs/configuration.md](./docs/configuration.md) |
 | All slash commands | [docs/commands.md](./docs/commands.md) |
+| **TUI mode** (Ink layout + keybindings) | [docs/tui.md](./docs/tui.md) |
 | LLM providers (Gemini/OpenAI/Anthropic) | [docs/providers.md](./docs/providers.md) |
 | MCP server integration | [docs/mcp.md](./docs/mcp.md) |
 | Built-in tools reference | [docs/tools.md](./docs/tools.md) |

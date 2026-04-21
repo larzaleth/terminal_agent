@@ -2,6 +2,33 @@
 
 All notable changes to AI Coding Agent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.0] — 2026-01-16
+
+### Added
+- **TUI (Ink-based terminal UI)** as the default mode in interactive terminals:
+  - Multi-pane layout: header, chat pane (with live tool execution), sidebar (provider/cost/activity), input box, dynamic footer
+  - **Expandable `ToolCallBlock`** for each tool call — collapsed by default, arrow ↑↓ to focus, Space/Enter to expand
+  - **Interactive `DiffPrompt`** — colored diff with keyboard shortcuts (`a` approve, `r` reject, `e` edit manually)
+  - **Interactive `ConfirmPrompt`** for `run_command` and `delete_file` (y/n/Esc)
+  - Live cost & token counter in header + sidebar
+  - Recent tools history in sidebar (last 5)
+  - Streaming text appears live in the chat pane
+  - Uses Ink's `<Static>` component so finalized messages scroll back in real terminal history
+- **Hybrid mode detection** — Ink in TTY, readline REPL in non-TTY (CI, piped input). Force via `--tui` / `--no-tui` or `MYAGENT_NO_TUI=1`.
+- **Pluggable prompter abstraction** (`src/ui/prompter.js`) — decouples tool confirmations from any specific UI. Readline and Ink both register implementations via `setPrompter()`.
+- **`docs/tui.md`** — full TUI mode reference (layout, keyboard shortcuts, troubleshooting)
+- **9 UI component tests** via `ink-testing-library`
+
+### Changed
+- `bin/cli.js` restructured with clean TTY-based routing to TUI or readline.
+- `edit_file`, `delete_file`, `run_command` use the prompter module instead of inline `readline`.
+- Package version bumped to 2.4.0.
+
+### Dependencies added
+- `ink@^5.2.1`, `react@^18.3.1` — UI runtime
+- `ink-text-input`, `ink-spinner` — UI widgets
+- `ink-testing-library` (dev) — component tests
+
 ## [2.3.0] — 2026-01-16
 
 ### Added

@@ -10,12 +10,13 @@ Complete documentation for **AI Coding Agent** (`myagent`) — a terminal-based 
 2. [**Configuration**](./configuration.md) — All settings in `agent.config.json`
 3. [**Slash Commands**](./commands.md) — `/help`, `/model`, `/save`, `/mcp`, …
 4. [**Providers**](./providers.md) — Gemini, OpenAI, Anthropic setup
-5. [**MCP Servers**](./mcp.md) — Connect GitHub, MySQL, filesystem, etc.
-6. [**Built-in Tools**](./tools.md) — `read_file`, `edit_file`, `run_command` reference
-7. [**Semantic RAG**](./rag.md) — How `/index` and context retrieval work
-8. [**Cost Tracking**](./cost-tracking.md) — Token pricing, usage reports
-9. [**Security Model**](./security.md) — Path safety, command allowlist, key storage
-10. [**Troubleshooting**](./troubleshooting.md) — Common issues and fixes
+5. [**TUI Mode**](./tui.md) — Ink-based terminal UI layout, keyboard shortcuts
+6. [**MCP Servers**](./mcp.md) — Connect GitHub, MySQL, filesystem, etc.
+7. [**Built-in Tools**](./tools.md) — `read_file`, `edit_file`, `run_command` reference
+8. [**Semantic RAG**](./rag.md) — How `/index` and context retrieval work
+9. [**Cost Tracking**](./cost-tracking.md) — Token pricing, usage reports
+10. [**Security Model**](./security.md) — Path safety, command allowlist, key storage
+11. [**Troubleshooting**](./troubleshooting.md) — Common issues and fixes
 
 ### Contributors
 

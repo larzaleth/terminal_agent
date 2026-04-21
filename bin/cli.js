@@ -11,11 +11,10 @@ import { globalTracker } from "../src/llm/cost-tracker.js";
 import { shutdownMcp } from "../src/mcp/client.js";
 
 // ===========================
-// 🔑 API KEY SETUP (saved with restrictive permissions)
+// 🔑 API KEY SETUP
 // ===========================
 async function setupApiKey(rl) {
   const globalEnvPath = getGlobalEnvPath();
-  // dotenv is already loaded via src/llm/llm.js → src/config/config.js chain.
   if (process.env.GEMINI_API_KEY) return;
 
   console.log(chalk.cyan.bold("\n👋 Welcome to AI Coding Agent!\n"));
@@ -27,19 +26,18 @@ async function setupApiKey(rl) {
     process.exit(1);
   }
 
-  // 0600 — owner read/write only, prevents other users on the machine from reading the key.
   fs.writeFileSync(globalEnvPath, `GEMINI_API_KEY=${key.trim()}\n`, { mode: 0o600 });
   console.log(chalk.green(`\n✅ API Key saved to ${globalEnvPath}\n`));
   process.env.GEMINI_API_KEY = key.trim();
 }
 
 // ===========================
-// 🎨 BANNER
+// 🎨 BANNER (readline mode only)
 // ===========================
 function showBanner() {
   console.log(chalk.cyan.bold(`
 ╔══════════════════════════════════════╗
-║     🤖 AI Coding Agent v2.1        ║
+║     🤖 AI Coding Agent v2.4        ║
 ║     Powered by Gemini               ║
 ╚══════════════════════════════════════╝`));
   console.log(chalk.dim("  Type your request, or use commands:"));
@@ -47,16 +45,24 @@ function showBanner() {
 }
 
 // ===========================
-// 🚀 MAIN
+// 🧪 TUI MODE (Ink)
 // ===========================
-async function main() {
-  // Single readline for the whole session — avoids repeated create/close overhead.
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+async function runTui() {
+  const { startTui } = await import("../src/ui/run.js");
+  const { instance } = startTui();
+  await instance.waitUntilExit();
+  await shutdownMcp().catch(() => {});
+  process.exit(0);
+}
 
+// ===========================
+// 🔁 READLINE MODE (fallback for non-TTY, CI, --no-tui)
+// ===========================
+async function runReadline() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   await setupApiKey(rl);
   showBanner();
 
-  // Graceful shutdown
   process.on("SIGINT", async () => {
     console.log(chalk.dim("\n\n👋 Goodbye!\n"));
     await shutdownMcp().catch(() => {});
@@ -64,11 +70,9 @@ async function main() {
     process.exit(0);
   });
 
-  // Main REPL loop
   while (true) {
     const input = await rl.question(chalk.green.bold("🧑 > "));
     const trimmed = input.trim();
-
     if (!trimmed) continue;
     if (trimmed === "exit" || trimmed === "quit") {
       console.log(chalk.dim("\n👋 Goodbye!\n"));
@@ -103,7 +107,7 @@ async function main() {
           const argSummary = args ? Object.values(args).map((v) => String(v).slice(0, 50)).join(", ") : "";
           console.log(chalk.yellow(`\n🔧 ${name}(${argSummary})`));
         },
-        onToolResult: () => { /* tool handlers already log their own output */ },
+        onToolResult: () => {},
         onDone: () => spinner.stop(),
         onError: (err) => spinner.fail(chalk.red(`Error: ${err.message}`)),
       });
@@ -117,6 +121,31 @@ async function main() {
       spinner.stop();
       console.error(chalk.red(`\n❌ Error: ${err.message}\n`));
     }
+  }
+}
+
+// ===========================
+// 🚀 ENTRY — Hybrid TUI / Readline
+// ===========================
+async function main() {
+  const forceTui = process.argv.includes("--tui");
+  const forceReadline =
+    process.argv.includes("--no-tui") ||
+    process.env.MYAGENT_NO_TUI === "1";
+  const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+  // Need a key before anything else — use a tiny readline just for that.
+  if (!process.env.GEMINI_API_KEY) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    await setupApiKey(rl);
+    rl.close();
+  }
+
+  const useTui = forceTui || (isTty && !forceReadline);
+  if (useTui) {
+    await runTui();
+  } else {
+    await runReadline();
   }
 }
 

@@ -2,10 +2,10 @@ import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import readline from "readline/promises";
 import { truncate, isSafePath } from "../utils/utils.js";
 import { classifyCommand } from "./command-classifier.js";
-import { renderDiff, diffStats } from "./diff.js";
+import { diffStats } from "./diff.js";
+import { getPrompter } from "../ui/prompter.js";
 import {
   IGNORE_DIRS,
   BINARY_EXTS,
@@ -19,11 +19,8 @@ import {
 // 🔹 HELPERS
 // ===========================
 async function confirmExecution(cmd, reason) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const tag = reason ? ` (${reason})` : "";
-  const answer = await rl.question(`\n⚠️ Agent wants to run${tag}: \`${cmd}\`\nAllow? (Y/n) > `);
-  rl.close();
-  return answer.trim().toLowerCase() !== "n";
+  return getPrompter().confirm({ message: `Agent wants to run${tag}: \`${cmd}\``, reason });
 }
 
 // Async recursive walker. Won't block the event loop on large repos.
@@ -139,15 +136,15 @@ export const tools = {
       // Show the diff preview (unless auto-approved via env var or non-TTY).
       const autoApprove = process.env[DIFF_AUTO_APPROVE_ENV] === "1" || !process.stdin.isTTY;
       if (!autoApprove) {
-        console.log(renderDiff(content, newContent, filePath));
-        console.log(`   📊 +${added} / -${removed} lines`);
-
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        const answer = await rl.question(`Apply this change? (Y/n/e=edit manually) > `);
-        rl.close();
-        const ans = answer.trim().toLowerCase();
-        if (ans === "n") return "🚫 Cancelled: Edit rejected by user.";
-        if (ans === "e") {
+        const { decision } = await getPrompter().editApproval({
+          filePath,
+          oldContent: content,
+          newContent,
+          added,
+          removed,
+        });
+        if (decision === "reject") return "🚫 Cancelled: Edit rejected by user.";
+        if (decision === "manual") {
           return `🚫 Cancelled: User wants to edit manually. File '${filePath}' was NOT modified.\n💡 Tip: Make the change yourself, then tell the agent what you did.`;
         }
       }
@@ -256,12 +253,8 @@ export const tools = {
         return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use rm -rf via run_command (caution advised).`;
       }
 
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const answer = await rl.question(`\n⚠️  Delete ${filePath}? (Y/n) > `);
-      rl.close();
-      if (answer.trim().toLowerCase() === "n") {
-        return "🚫 Cancelled: Deletion denied by user.";
-      }
+      const ok = await getPrompter().confirm({ message: `Delete ${filePath}?`, reason: "destructive" });
+      if (!ok) return "🚫 Cancelled: Deletion denied by user.";
 
       await fs.unlink(filePath);
       return `✅ Success: Deleted '${filePath}'`;
