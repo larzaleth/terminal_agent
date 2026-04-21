@@ -22,8 +22,10 @@ export async function runAgent(userInput, callbacks = {}) {
     onText = (t) => process.stdout.write(t),
     onToolCall = () => {},
     onToolResult = () => {},
+    onRetry = () => {},
     onDone = () => {},
     onError = () => {},
+    signal,
   } = callbacks;
 
   const config = loadConfig();
@@ -80,6 +82,10 @@ export async function runAgent(userInput, callbacks = {}) {
   const toolLimit = pLimit(TOOL_CONCURRENCY);
 
   while (!isDone && iterations < maxIterations) {
+    if (signal?.aborted) {
+      onText("\n⚠️ Cancelled by user.\n");
+      break;
+    }
     iterations++;
     onThinking();
 
@@ -88,13 +94,15 @@ export async function runAgent(userInput, callbacks = {}) {
     let usage = null;
 
     try {
-      const stream = await retry(() =>
-        provider.stream({
-          model: agentModel,
-          systemInstruction,
-          messages: memory,
-          tools: toolSchemas,
-        })
+      const stream = await retry(
+        () =>
+          provider.stream({
+            model: agentModel,
+            systemInstruction,
+            messages: memory,
+            tools: toolSchemas,
+          }),
+        { onRetry }
       );
 
       for await (const evt of stream) {

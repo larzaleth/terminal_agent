@@ -43,6 +43,9 @@ I'll read the file first.                  │                   │
 - `Enter` — send message
 - `↑` / `↓` — focus previous/next tool block in the current turn
 - `Space` / `Enter` (when a tool is focused) — toggle expand/collapse
+- `PgUp` / `PgDn` — scroll through earlier chat history
+- `G` / `End` — jump back to the bottom of history
+- `Esc` — **cancel** the current agent turn (if it's thinking/running)
 - `Ctrl+L` — clear history (memory kept, visual reset)
 - `Ctrl+C` — exit
 - `Tab` — (planned) autocomplete slash commands
@@ -55,6 +58,32 @@ I'll read the file first.                  │                   │
 ### Confirmation prompt (run_command, delete_file)
 - `y` / `Enter` — allow
 - `n` / `Esc` — deny
+
+## Long-running Tasks
+
+If the agent takes a while to respond (big codebase, complex prompt, slow model):
+
+- The **Footer shows a live elapsed timer** — `⠙ thinking 12s` — so you always know it's still working
+- After **30 seconds** the elapsed counter turns **red** as a gentle warning
+- A **retry notice** appears when the provider is rate-limited: `Retry 1/3 in 1.5s — HTTP 429`
+- Press **`Esc`** to cancel — the agent finishes its current step and stops cleanly
+- **Sidebar's status indicator** echoes the same state (● idle / ⠋ thinking / running)
+
+You're never left wondering whether something's hung.
+
+## Scrolling Through History
+
+Chat history stays in the bounded pane. If older messages get trimmed from view, you can scroll back through them:
+
+- **`PgUp`** — scroll up (show older)
+- **`PgDn`** — scroll down (show newer)
+- **`G`** — jump to bottom (vim-ish)
+- While scrolled, `↑` / `↓` also scroll line-by-line
+- A header indicator shows `↑ 11 earlier messages` above the visible window
+- A footer indicator shows `↓ 4 newer messages — PgDn / G to return to bottom` when you're scrolled up
+- Current turn messages always snap to bottom when a new one arrives (your live reading is preserved until you scroll)
+
+If you need the full transcript, `/save filename.md` exports everything from `memory.json`.
 
 ## Tool Execution Live Panel
 
