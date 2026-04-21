@@ -68,6 +68,32 @@ test("mouse: press + drag + release sequence fires in order", () => {
   assert.equal(events[3].press, false);
 });
 
+test("mouse: enable/disable monkey-patches stdin.read AND stdin.emit", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { enableMouse, disableMouse } = await import("../src/ui/mouse.js");
+
+  const fakeStdin = Object.assign(new EventEmitter(), {
+    buffer: "hi\x1b[<64;10;5Mworld",
+    read(_size) {
+      const b = this.buffer;
+      this.buffer = "";
+      return b || null;
+    },
+  });
+  const fakeStdout = { isTTY: true, write: () => {} };
+
+  const origRead = fakeStdin.read;
+  enableMouse(fakeStdin, fakeStdout);
+
+  // read() should now strip the mouse bytes out
+  const chunk = fakeStdin.read();
+  assert.equal(chunk, "hiworld");
+  assert.notEqual(fakeStdin.read, origRead);
+
+  disableMouse(fakeStdin, fakeStdout);
+  assert.equal(fakeStdin.read, origRead);
+});
+
 test("sparkline: empty array returns empty string", () => {
   assert.equal(sparkline([]), "");
 });

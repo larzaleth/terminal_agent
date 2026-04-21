@@ -51,10 +51,22 @@ export class GeminiProvider {
     const contents = this._toGeminiContents(messages);
     const geminiTools = this._toGeminiTools(tools);
 
+    // Disable Gemini 2.5+ "thinking" mode. Multi-turn tool loops require
+    // round-tripping the opaque `thoughtSignature` on every follow-up call,
+    // which our transcript doesn't preserve — leading to
+    //   "Function call is missing thought_signature in function call parts."
+    // Budget 0 keeps behaviour deterministic and cheaper; re-enable per-call
+    // by plumbing thoughtSignatures through the message history.
+    const config = {
+      systemInstruction,
+      tools: geminiTools,
+      thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+    };
+
     const resp = await this.client.models.generateContentStream({
       model,
       contents,
-      config: { systemInstruction, tools: geminiTools },
+      config,
     });
 
     let lastUsage = null;
