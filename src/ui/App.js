@@ -1,4 +1,4 @@
-import { useState, useReducer, useEffect, useCallback, useMemo } from "react";
+import { useState, useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { Box, useApp, useInput } from "ink";
 import { h } from "./h.js";
 
@@ -12,6 +12,7 @@ import { Footer } from "./components/Footer.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 
 import { setPrompter, resetPrompter } from "./prompter.js";
+import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
 import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
 import { loadConfig } from "../config/config.js";
@@ -108,6 +109,26 @@ function reducer(state, action) {
       );
       const recent = [...state.recentTools, { name: action.name, status: action.error ? "error" : "done" }].slice(-5);
       return { ...state, pending: { ...state.pending, blocks }, currentTool: null, recentTools: recent };
+    }
+    case "tool_stream_chunk": {
+      // Append live stdout/stderr chunk to the most recent running tool of that name.
+      if (!state.pending) return state;
+      let found = false;
+      const blocks = [...state.pending.blocks];
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        if (b.type === "tool_call" && b.tool === action.name && b.status === "running") {
+          const prevLive = b.liveOutput || "";
+          // Keep only last ~2000 chars of live output; older still visible when tool finishes
+          const combined = prevLive + action.chunk;
+          const trimmed = combined.length > 2000 ? combined.slice(-2000) : combined;
+          blocks[i] = { ...b, liveOutput: trimmed, expanded: true };
+          found = true;
+          break;
+        }
+      }
+      if (!found) return state;
+      return { ...state, pending: { ...state.pending, blocks } };
     }
     case "toggle_tool_expanded": {
       if (!state.pending) return state;

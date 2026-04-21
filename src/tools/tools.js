@@ -6,6 +6,7 @@ import { truncate, isSafePath } from "../utils/utils.js";
 import { classifyCommand } from "./command-classifier.js";
 import { diffStats } from "./diff.js";
 import { getPrompter } from "../ui/prompter.js";
+import { emitToolStream, hasToolStreamCallback } from "../ui/toolStream.js";
 import {
   IGNORE_DIRS,
   BINARY_EXTS,
@@ -340,13 +341,15 @@ function runWithSpawn(cmd) {
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       stdoutBuf += text;
-      process.stdout.write(text);
+      if (hasToolStreamCallback()) emitToolStream("run_command", text);
+      else process.stdout.write(text);
     });
 
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
       stderrBuf += text;
-      process.stderr.write(text);
+      if (hasToolStreamCallback()) emitToolStream("run_command", text);
+      else process.stderr.write(text);
     });
 
     child.on("error", (err) => {
