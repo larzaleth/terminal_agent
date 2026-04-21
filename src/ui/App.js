@@ -321,13 +321,37 @@ export function App() {
           return;
         }
         dispatch({ type: "add_user_message", text });
+        // Capture slash-command stdout so ink's muted console doesn't swallow
+        // it. We temporarily replace console.log with a buffer collector,
+        // strip ANSI colour codes (ink can't render them inline via Text),
+        // then inject the full output into the chat as a system message.
+        const buffer = [];
+        const prevLog = console.log;
+        console.log = (...args) => {
+          buffer.push(
+            args
+              .map((a) => (typeof a === "string" ? a : String(a)))
+              .join(" ")
+          );
+        };
         try {
           const handled = await handleSlashCommand(text);
-          dispatch({ type: "add_system", text: handled ? `✓ handled: ${text}` : `Unknown command: ${text}` });
+          // eslint-disable-next-line no-control-regex
+          const ansiRe = /\x1b\[[0-9;]*m/g;
+          const output = buffer.join("\n").replace(ansiRe, "").trim();
+          if (output) {
+            dispatch({ type: "add_system", text: output });
+          } else if (handled) {
+            dispatch({ type: "add_system", text: `✓ ${text}` });
+          } else {
+            dispatch({ type: "add_system", text: `Unknown command: ${text}` });
+          }
           setConfig(loadConfig());
           setMcpServers(listMcpStatus());
         } catch (err) {
           dispatch({ type: "add_system", text: `Error: ${err.message}` });
+        } finally {
+          console.log = prevLog;
         }
         return;
       }

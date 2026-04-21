@@ -20,6 +20,7 @@ const SGR_RE = /\x1b\[<(\d+);(\d+);(\d+)[Mm]/g;
 let cb = null;
 let installed = false;
 let originalEmit = null;
+let originalRead = null;
 
 export function setMouseCallback(fn) {
   cb = fn;
@@ -85,17 +86,36 @@ export function enableMouse(stdin = process.stdin, stdout = process.stdout) {
   if (!stdout.isTTY) return; // no-op when piped
   stdout.write(ENABLE);
 
-  // Intercept stdin `emit('data', …)` to strip mouse bytes before ink sees
-  // them. Ink's useInput subscribes via process.stdin.on('data', …) so we
-  // patch emit (the shared code path) rather than wrapping every listener.
+  // Ink v5 consumes stdin via `stdin.on('readable', ...)` + `stdin.read()`,
+  // NOT via `.on('data', ...)`. So to strip mouse bytes before ink sees
+  // them we must patch BOTH `.read()` (ink's path) and `.emit('data', ...)`
+  // (fallback for any other listeners, e.g. readline helpers).
+  originalRead = stdin.read.bind(stdin);
+  stdin.read = (size) => {
+    const chunk = originalRead(size);
+    if (chunk === null || chunk === undefined) return chunk;
+    const asString = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    if (!asString.includes("\x1b[<")) return chunk;
+    const stripped = stripMouseSequences(asString);
+    if (stripped === "") return null; // all mouse noise, pretend empty
+    if (stripped === asString) return chunk;
+    return Buffer.isBuffer(chunk) ? Buffer.from(stripped, "utf8") : stripped;
+  };
+
   originalEmit = stdin.emit.bind(stdin);
   stdin.emit = (event, chunk, ...rest) => {
     if (event === "data") {
       const asString = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-      const stripped = stripMouseSequences(asString);
-      if (stripped === "") return true; // fully consumed, don't propagate
-      if (stripped !== asString) {
-        return originalEmit("data", Buffer.isBuffer(chunk) ? Buffer.from(stripped) : stripped, ...rest);
+      if (typeof asString === "string" && asString.includes("\x1b[<")) {
+        const stripped = stripMouseSequences(asString);
+        if (stripped === "") return true;
+        if (stripped !== asString) {
+          return originalEmit(
+            "data",
+            Buffer.isBuffer(chunk) ? Buffer.from(stripped, "utf8") : stripped,
+            ...rest
+          );
+        }
       }
     }
     return originalEmit(event, chunk, ...rest);
@@ -114,6 +134,10 @@ export function disableMouse(stdin = process.stdin, stdout = process.stdout) {
   if (originalEmit) {
     stdin.emit = originalEmit;
     originalEmit = null;
+  }
+  if (originalRead) {
+    stdin.read = originalRead;
+    originalRead = null;
   }
   installed = false;
 }
