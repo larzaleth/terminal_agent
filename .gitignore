@@ -1,34 +1,31 @@
-node_modules
-.env
+# Dependencies
+node_modules/
+
+# Runtime artifacts
 index.json
 memory.json
-chat.log-e 
-# Environment and credential files
+cost-report.json
+.agent_cache/
+transcript-*.md
+chat.log
+
+# Logs
+*.log
+
+# Environment & credentials (NEVER commit these)
 .env
 .env.*
-*.env
+!.env.example
 credentials.json
 *.pem
 *.key
 .credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
 -e 
 # Environment and credential files
 .env

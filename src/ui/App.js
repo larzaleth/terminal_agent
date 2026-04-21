@@ -1,4 +1,4 @@
-import { useState, useReducer, useEffect, useCallback } from "react";
+import { useState, useReducer, useEffect, useCallback, useMemo } from "react";
 import { Box, useApp, useInput } from "ink";
 import { h } from "./h.js";
 
@@ -9,6 +9,7 @@ import { InputBox } from "./components/InputBox.js";
 import { DiffPrompt } from "./components/DiffPrompt.js";
 import { ConfirmPrompt } from "./components/ConfirmPrompt.js";
 import { Footer } from "./components/Footer.js";
+import { useTerminalSize } from "./useTerminalSize.js";
 
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { runAgent } from "../core/agents.js";
@@ -17,16 +18,16 @@ import { loadConfig } from "../config/config.js";
 import { globalTracker } from "../llm/cost-tracker.js";
 import { listMcpStatus, shutdownMcp } from "../mcp/client.js";
 
-// ─── State reducer ──────────────────────────────────────────────────
+// ─── State ───────────────────────────────────────────────────────────
 const initialState = {
-  finalized: [],                // finished messages (scrollback-friendly via <Static>)
-  pending: null,                // in-progress assistant message
-  status: "idle",               // idle | thinking | tool_running | awaiting_edit | awaiting_confirm
+  finalized: [],
+  pending: null,
+  status: "idle",
   statusMessage: "",
   currentTool: null,
-  recentTools: [],              // last ~5 tools {name, status}
-  focusedToolIdx: -1,           // which tool in pending message has keyboard focus
-  prompt: null,                 // { kind: "edit"|"confirm", ...props, resolve }
+  recentTools: [],
+  focusedToolIdx: -1,
+  prompt: null,
   cost: 0,
   tokens: 0,
   cacheHitRate: 0,
@@ -41,11 +42,20 @@ function genId() {
 function reducer(state, action) {
   switch (action.type) {
     case "add_user_message":
-      return { ...state, finalized: [...state.finalized, { id: genId(), role: "user", blocks: [{ type: "text", text: action.text }] }] };
-
+      return {
+        ...state,
+        finalized: [
+          ...state.finalized,
+          { id: genId(), role: "user", blocks: [{ type: "text", text: action.text }] },
+        ],
+      };
     case "start_turn":
-      return { ...state, pending: { id: genId(), role: "assistant", blocks: [] }, status: "thinking", iteration: 0 };
-
+      return {
+        ...state,
+        pending: { id: genId(), role: "assistant", blocks: [] },
+        status: "thinking",
+        iteration: 0,
+      };
     case "add_plan":
       if (!state.pending) return state;
       return {
@@ -55,7 +65,6 @@ function reducer(state, action) {
           blocks: [...state.pending.blocks, { type: "plan", steps: action.steps }],
         },
       };
-
     case "append_text": {
       if (!state.pending) return state;
       const blocks = [...state.pending.blocks];
@@ -67,7 +76,6 @@ function reducer(state, action) {
       }
       return { ...state, pending: { ...state.pending, blocks }, status: "thinking" };
     }
-
     case "tool_start": {
       if (!state.pending) return state;
       const block = {
@@ -86,7 +94,6 @@ function reducer(state, action) {
         currentTool: action.name,
       };
     }
-
     case "tool_end": {
       if (!state.pending) return state;
       const blocks = state.pending.blocks.map((b) =>
@@ -97,7 +104,6 @@ function reducer(state, action) {
       const recent = [...state.recentTools, { name: action.name, status: action.error ? "error" : "done" }].slice(-5);
       return { ...state, pending: { ...state.pending, blocks }, currentTool: null, recentTools: recent };
     }
-
     case "toggle_tool_expanded": {
       if (!state.pending) return state;
       const blocks = state.pending.blocks.map((b) =>
@@ -105,7 +111,6 @@ function reducer(state, action) {
       );
       return { ...state, pending: { ...state.pending, blocks } };
     }
-
     case "focus_tool": {
       if (!state.pending) return state;
       const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
@@ -115,24 +120,29 @@ function reducer(state, action) {
       if (next >= toolBlocks.length) next = 0;
       return { ...state, focusedToolIdx: next };
     }
-
     case "commit_turn":
       return state.pending
-        ? { ...state, finalized: [...state.finalized, state.pending], pending: null, status: "idle", focusedToolIdx: -1, currentTool: null }
+        ? {
+            ...state,
+            finalized: [...state.finalized, state.pending],
+            pending: null,
+            status: "idle",
+            focusedToolIdx: -1,
+            currentTool: null,
+          }
         : { ...state, status: "idle" };
-
     case "set_prompt":
-      return { ...state, prompt: action.prompt, status: action.prompt.kind === "edit" ? "awaiting_edit" : "awaiting_confirm" };
-
+      return {
+        ...state,
+        prompt: action.prompt,
+        status: action.prompt.kind === "edit" ? "awaiting_edit" : "awaiting_confirm",
+      };
     case "clear_prompt":
       return { ...state, prompt: null, status: state.pending ? "thinking" : "idle" };
-
     case "set_cost":
       return { ...state, cost: action.cost, tokens: action.tokens, cacheHitRate: action.cacheHitRate };
-
     case "set_iteration":
       return { ...state, iteration: action.iteration, maxIterations: action.maxIterations };
-
     case "add_system":
       return {
         ...state,
@@ -141,23 +151,31 @@ function reducer(state, action) {
           { id: genId(), role: "system", blocks: [{ type: "text", text: action.text }] },
         ],
       };
-
     case "clear_history":
       return { ...initialState, cost: state.cost, tokens: state.tokens, cacheHitRate: state.cacheHitRate };
-
     default:
       return state;
   }
 }
 
-// ─── Main App ───────────────────────────────────────────────────────
+// ─── Main App ────────────────────────────────────────────────────────
 export function App() {
   const { exit } = useApp();
   const [state, dispatch] = useReducer(reducer, initialState);
   const [config, setConfig] = useState(() => loadConfig());
   const [mcpServers, setMcpServers] = useState([]);
+  const { rows, columns } = useTerminalSize();
 
-  // Register prompter overrides so tools route through our UI.
+  // ── Layout math ────────────────────────────────────────────────────
+  // Reserve rows for: Header (3) + input/prompt (≥3) + Footer (1) + borders
+  const sidebarWidth = columns >= 110 ? 32 : columns >= 90 ? 28 : 0;
+  const showSidebar = sidebarWidth > 0;
+
+  // Approx rows used by chrome elements (header + input + footer + paddings).
+  const chromeRows = state.prompt?.kind === "edit" ? 20 : 7;
+  const chatMaxRows = Math.max(6, rows - chromeRows);
+
+  // ── Prompter registration ──────────────────────────────────────────
   useEffect(() => {
     setPrompter({
       confirm: ({ message, reason }) =>
@@ -175,7 +193,7 @@ export function App() {
     return () => resetPrompter();
   }, []);
 
-  // Periodically pull latest cost snapshot (runAgent updates globalTracker).
+  // ── Live cost polling ──────────────────────────────────────────────
   useEffect(() => {
     const iv = setInterval(() => {
       const stats = globalTracker.getStats(config.model);
@@ -189,44 +207,38 @@ export function App() {
     return () => clearInterval(iv);
   }, [config.model]);
 
-  // Global keyboard shortcuts — only active when not prompting or typing.
-  useInput((input, key) => {
+  // ── Global keyboard shortcuts ──────────────────────────────────────
+  useInput(async (input, key) => {
+    if (key.ctrl && input === "c") {
+      await shutdownMcp().catch(() => {});
+      exit();
+      return;
+    }
     if (state.prompt) return;
     if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
     if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
     if (key.downArrow) dispatch({ type: "focus_tool", delta: 1 });
-    if (input === " " || key.return) {
-      if (state.focusedToolIdx >= 0 && state.pending) {
-        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
-        const target = toolBlocks[state.focusedToolIdx];
-        if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
-      }
+    if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
+      const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+      const target = toolBlocks[state.focusedToolIdx];
+      if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
     }
   });
 
-  // ─── Submit handler ───────────────────────────────────────────────
+  // ── Submit handler ─────────────────────────────────────────────────
   const handleSubmit = useCallback(
     async (text) => {
-      // Exit commands
       if (text === "exit" || text === "quit") {
         await shutdownMcp().catch(() => {});
         exit();
         return;
       }
 
-      // Slash commands — reuse existing handler; output already logs to console
-      // which Ink preserves via its static region. We still add the user line
-      // to history for clarity.
       if (text.startsWith("/")) {
         dispatch({ type: "add_user_message", text });
         try {
           const handled = await handleSlashCommand(text);
-          if (!handled) {
-            dispatch({ type: "add_system", text: `Unknown command: ${text}` });
-          } else {
-            dispatch({ type: "add_system", text: `✓ ${text}` });
-          }
-          // Refresh config + MCP after any slash command that might change them
+          dispatch({ type: "add_system", text: handled ? `✓ handled: ${text}` : `Unknown command: ${text}` });
           setConfig(loadConfig());
           setMcpServers(listMcpStatus());
         } catch (err) {
@@ -235,7 +247,6 @@ export function App() {
         return;
       }
 
-      // Normal agent run
       dispatch({ type: "add_user_message", text });
       dispatch({ type: "start_turn" });
 
@@ -256,11 +267,9 @@ export function App() {
             dispatch({ type: "tool_start", id, name, args });
           },
           onToolResult: (name, preview) => {
-            // Match back to the tool id (naive by name — sufficient in practice)
-            const key = [...toolIdMap.entries()].reverse().find(([k]) => k.startsWith(name + "{") || k.startsWith(name));
-            if (!key) return;
-            const id = key[1];
-            dispatch({ type: "tool_end", id, name, result: preview, error: false });
+            const entry = [...toolIdMap.entries()].reverse().find(([k]) => k.startsWith(name));
+            if (!entry) return;
+            dispatch({ type: "tool_end", id: entry[1], name, result: preview, error: false });
           },
           onDone: () => {},
           onError: (err) => dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` }),
@@ -274,21 +283,28 @@ export function App() {
     [config, exit]
   );
 
-  // ─── Prompt resolution ────────────────────────────────────────────
   const handlePromptResolve = useCallback(
     (result) => {
       const { prompt } = state;
       if (!prompt) return;
-      prompt.resolve(prompt.kind === "edit" ? result : result);
+      prompt.resolve(result);
       dispatch({ type: "clear_prompt" });
     },
     [state]
   );
 
-  // ─── Render ───────────────────────────────────────────────────────
+  const focusedToolId = useMemo(() => {
+    if (state.focusedToolIdx < 0 || !state.pending) return null;
+    const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+    return toolBlocks[state.focusedToolIdx]?.id ?? null;
+  }, [state.focusedToolIdx, state.pending]);
+
+  // ── Render ─────────────────────────────────────────────────────────
   return h(
     Box,
-    { flexDirection: "column" },
+    { flexDirection: "column", height: rows, width: columns },
+
+    // Header
     h(Header, {
       provider: config.provider || "gemini",
       model: config.model,
@@ -297,36 +313,47 @@ export function App() {
       maxIterations: state.maxIterations,
     }),
 
-    // Body: messages on the left, sidebar on the right.
+    // Body — chat pane + optional sidebar
     h(
       Box,
-      { flexDirection: "row" },
+      { flexDirection: "row", flexGrow: 1, overflow: "hidden" },
       h(
         Box,
-        { flexDirection: "column", flexGrow: 1, paddingRight: 1 },
+        {
+          flexDirection: "column",
+          flexGrow: 1,
+          paddingX: 1,
+          borderStyle: "round",
+          borderColor: "gray",
+          overflow: "hidden",
+        },
         h(MessageList, {
           finalized: state.finalized,
           pending: state.pending,
-          focusedToolId:
-            state.focusedToolIdx >= 0 && state.pending
-              ? state.pending.blocks.filter((b) => b.type === "tool_call")[state.focusedToolIdx]?.id
-              : null,
+          focusedToolId,
+          maxRows: chatMaxRows,
         })
       ),
-      h(Sidebar, {
-        provider: config.provider || "gemini",
-        model: config.model,
-        status: state.status,
-        currentTool: state.currentTool,
-        recentTools: state.recentTools,
-        cost: state.cost,
-        tokens: state.tokens,
-        cacheHitRate: state.cacheHitRate,
-        mcpServers,
-      })
+      showSidebar
+        ? h(
+            Box,
+            { width: sidebarWidth, flexShrink: 0 },
+            h(Sidebar, {
+              provider: config.provider || "gemini",
+              model: config.model,
+              status: state.status,
+              currentTool: state.currentTool,
+              recentTools: state.recentTools,
+              cost: state.cost,
+              tokens: state.tokens,
+              cacheHitRate: state.cacheHitRate,
+              mcpServers,
+            })
+          )
+        : null
     ),
 
-    // Prompt area — replaces input box while active
+    // Input / prompt region
     state.prompt
       ? state.prompt.kind === "edit"
         ? h(DiffPrompt, {

@@ -43,19 +43,45 @@ npx . # from inside the repo directory
 
 ## First Run
 
+### Option A: interactive prompt (default)
+
 The first time you execute `myagent`, it prompts for your Gemini API key:
 
 ```
 👋 Welcome to AI Coding Agent!
-
-Looks like you haven't set up your Gemini API Key yet.
 
 🔑 Enter Gemini API Key (get it at https://aistudio.google.com): AIzaSy...
 
 ✅ API Key saved to /home/you/.myagent.env
 ```
 
-The key is saved with `0o600` permissions (owner read/write only). On subsequent runs, it's auto-loaded — you'll never be asked again.
+The key is saved with `0o600` permissions. Subsequent runs auto-load it.
+
+### Option B: `.env` file (recommended for multi-provider setups)
+
+```bash
+cp .env.example .env
+$EDITOR .env        # paste your key(s)
+myagent
+```
+
+See [`/app/.env.example`](../.env.example) for all supported variables (providers, model overrides, behavior flags).
+
+> ⚠️ **If you see `403 — API key was reported as leaked`:** Google auto-revokes keys detected in public places (GitHub commits, public logs, pastes).
+> - Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+> - Delete the leaked key and create a new one
+> - Update `~/.myagent.env` (or `.env`) with the new key
+> - There is no way to un-revoke a leaked key
+
+### Set model & provider per-project
+
+If a folder has its own `.env` with `MYAGENT_MODEL` / `MYAGENT_PROVIDER`, those override `agent.config.json` for that session only:
+
+```env
+# .env in your project
+MYAGENT_PROVIDER=anthropic
+MYAGENT_MODEL=claude-3-5-haiku-latest
+```
 
 ## Your First Session
 
