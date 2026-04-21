@@ -1,4 +1,5 @@
 import { useState, useReducer, useEffect, useCallback, useMemo, useRef } from "react";
+
 import { Box, useApp, useInput } from "ink";
 import { h } from "./h.js";
 
@@ -207,6 +208,29 @@ export function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const { rows, columns } = useTerminalSize();
 
+  // Ref-backed text buffer: coalesce streaming tokens so React only re-renders
+  // every ~60ms instead of on every chunk (fixes TUI freeze on long turns).
+  const textBufferRef = useRef("");
+  const textFlushTimerRef = useRef(null);
+  const flushTextBuffer = useCallback(() => {
+    if (textFlushTimerRef.current) {
+      clearTimeout(textFlushTimerRef.current);
+      textFlushTimerRef.current = null;
+    }
+    const buf = textBufferRef.current;
+    if (buf) {
+      textBufferRef.current = "";
+      dispatch({ type: "append_text", text: buf });
+    }
+  }, []);
+  const scheduleTextFlush = useCallback(() => {
+    if (textFlushTimerRef.current) return;
+    textFlushTimerRef.current = setTimeout(() => {
+      textFlushTimerRef.current = null;
+      flushTextBuffer();
+    }, 60);
+  }, [flushTextBuffer]);
+
   // ── Layout math ────────────────────────────────────────────────────
   const sidebarWidth = columns >= 110 ? 32 : columns >= 90 ? 28 : 0;
   const showSidebar = sidebarWidth > 0;
@@ -229,6 +253,14 @@ export function App() {
         }),
     });
     return () => resetPrompter();
+  }, []);
+
+  // ── Tool live-stream wiring: forward stdout/stderr chunks to the reducer ──
+  useEffect(() => {
+    setToolStreamCallback((name, chunk) => {
+      dispatch({ type: "tool_stream_chunk", name, chunk });
+    });
+    return () => clearToolStreamCallback();
   }, []);
 
   // ── Live cost polling ──────────────────────────────────────────────
@@ -348,7 +380,10 @@ export function App() {
             dispatch({ type: "set_iteration", iteration: iter, maxIterations: config.maxIterations || 25 });
             dispatch({ type: "set_status_message", message: "" });
           },
-          onText: (t) => dispatch({ type: "append_text", text: t }),
+          onText: (t) => {
+            textBufferRef.current += t;
+            scheduleTextFlush();
+          },
           onToolCall: (name, args) => {
             const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             toolIdMap.set(name + JSON.stringify(args), id);
@@ -366,16 +401,21 @@ export function App() {
             });
           },
           onDone: () => {},
-          onError: (err) => dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` }),
+          onError: (err) => {
+            flushTextBuffer();
+            dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
+          },
         });
       } catch (err) {
+        flushTextBuffer();
         dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
       } finally {
+        flushTextBuffer();
         setAbortController(null);
         dispatch({ type: "commit_turn" });
       }
     },
-    [config, exit, abortController]
+    [config, exit, abortController, scheduleTextFlush, flushTextBuffer]
   );
 
   const handlePromptResolve = useCallback(
