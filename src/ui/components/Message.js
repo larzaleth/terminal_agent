@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { h } from "../h.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
+import { Markdown } from "../markdown.js";
 
 function roleHeader(role) {
   switch (role) {
@@ -26,10 +27,22 @@ export function Message({ message, focusedToolId }) {
     ...blocks.map((block, idx) => {
       const key = `b${idx}`;
       if (block.type === "text") {
+        const text = block.text || "";
+        // User input is rendered as plain text; assistant/system/tool use Markdown.
+        if (role === "user") {
+          return h(
+            Box,
+            { key, paddingLeft: 3 },
+            h(Text, { color: "white", wrap: "wrap" }, text)
+          );
+        }
         return h(
           Box,
-          { key, paddingLeft: 3 },
-          h(Text, { color: role === "user" ? "white" : "whiteBright", wrap: "wrap" }, block.text || "")
+          { key, paddingLeft: 3, flexDirection: "column" },
+          h(Markdown, {
+            text,
+            color: role === "system" ? "magenta" : "whiteBright",
+          })
         );
       }
       if (block.type === "plan") {
@@ -48,6 +61,7 @@ export function Message({ message, focusedToolId }) {
           args: block.args,
           status: block.status,
           result: block.result,
+          liveOutput: block.liveOutput,
           expanded: block.expanded,
           focused: focusedToolId === block.id,
         });

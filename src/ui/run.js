@@ -1,6 +1,7 @@
 import { render } from "ink";
 import { h } from "./h.js";
 import { App } from "./App.js";
+import { enableMouse, disableMouse } from "./mouse.js";
 
 const ENTER_ALT = "\x1b[?1049h\x1b[H";
 const EXIT_ALT = "\x1b[?1049l";
@@ -19,7 +20,12 @@ export function startTui() {
   // and restored on exit (vim/htop/less pattern).
   process.stdout.write(ENTER_ALT);
 
+  // Enable SGR mouse reporting so the wheel can scroll chat history. Safe
+  // no-op in non-TTY environments (e.g. tests, piped stdout).
+  enableMouse();
+
   const cleanup = () => {
+    disableMouse();
     process.stdout.write(EXIT_ALT);
     console.log = origLog;
     console.warn = origWarn;

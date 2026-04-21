@@ -16,6 +16,7 @@ function getHints(status, canCancel, scrollOffset) {
     return [
       { key: "PgUp/PgDn", label: "scroll" },
       { key: "G / End", label: "jump to bottom" },
+      { key: "y", label: "yank" },
       { key: "Ctrl+C", label: "exit" },
     ];
   }
@@ -42,17 +43,36 @@ function getHints(status, canCancel, scrollOffset) {
       return [
         { key: "Enter", label: "send" },
         { key: "↑/↓", label: "focus tool" },
-        { key: "PgUp/PgDn", label: "scroll history" },
-        { key: "Ctrl+L", label: "clear" },
+        { key: "y", label: "yank" },
+        { key: "drag", label: "select" },
         { key: "/help", label: "commands" },
       ];
   }
 }
 
-export function Footer({ status, message, elapsedMs = 0, canCancel = false, scrollOffset = 0 }) {
+export function Footer({ status, message, elapsedMs = 0, canCancel = false, scrollOffset = 0, toast = null, selection = null }) {
   const hints = getHints(status, canCancel, scrollOffset);
   const isWorking = status === "thinking" || status === "tool_running";
   const elapsedStr = isWorking ? formatElapsed(elapsedMs) : "";
+
+  // Toast takes priority — shows clipboard / error feedback for a few seconds.
+  if (toast) {
+    return h(
+      Box,
+      { paddingX: 1 },
+      h(Text, { color: toast.color || "cyan", bold: true }, toast.text)
+    );
+  }
+
+  // Active drag selection — show live row count.
+  if (selection) {
+    const rows = Math.abs(selection.endY - selection.startY) + 1;
+    return h(
+      Box,
+      { paddingX: 1 },
+      h(Text, { color: "magenta", bold: true }, `📐 Selecting ${rows} row${rows === 1 ? "" : "s"} — release to copy`)
+    );
+  }
 
   return h(
     Box,

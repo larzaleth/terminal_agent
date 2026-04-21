@@ -27,7 +27,7 @@ function argsSummary(args) {
     .join(", ");
 }
 
-export function ToolCallBlock({ tool, args, status, result, expanded, focused }) {
+export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded, focused }) {
   const icon = TOOL_ICON[tool] || "🔧";
   const statusColor = status === "running" ? "yellow" : status === "error" ? "red" : "green";
   const statusMark = status === "running" ? h(Spinner, { type: "dots" }) : status === "error" ? "✗" : "✓";
@@ -52,7 +52,7 @@ export function ToolCallBlock({ tool, args, status, result, expanded, focused })
     : ["(no args)"];
 
   const resultText = status === "running"
-    ? "(running…)"
+    ? (liveOutput && liveOutput.trim() ? liveOutput : "(running…)")
     : typeof result === "string"
       ? result.length > 1200
         ? result.slice(0, 1200) + "\n…(truncated — full result preserved in memory)"

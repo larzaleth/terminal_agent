@@ -1,4 +1,5 @@
-import { useState, useReducer, useEffect, useCallback, useMemo } from "react";
+import { useState, useReducer, useEffect, useCallback, useMemo, useRef } from "react";
+
 import { Box, useApp, useInput } from "ink";
 import { h } from "./h.js";
 
@@ -12,169 +13,22 @@ import { Footer } from "./components/Footer.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 
 import { setPrompter, resetPrompter } from "./prompter.js";
+import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
+import { setMouseCallback, clearMouseCallback } from "./mouse.js";
+import { findToolAt, extractTextInRange } from "./clickRegistry.js";
+import {
+  writeClipboard,
+  extractLastAssistant,
+  extractFocusedTool,
+  extractCurrentTurn,
+  extractAll,
+} from "./clipboard.js";
+import { reducer, initialState } from "./reducer.js";
 import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
 import { loadConfig } from "../config/config.js";
 import { globalTracker } from "../llm/cost-tracker.js";
 import { listMcpStatus, shutdownMcp } from "../mcp/client.js";
-
-// ─── State ───────────────────────────────────────────────────────────
-const initialState = {
-  finalized: [],
-  pending: null,
-  status: "idle",
-  statusMessage: "",
-  currentTool: null,
-  recentTools: [],
-  focusedToolIdx: -1,
-  prompt: null,
-  cost: 0,
-  tokens: 0,
-  cacheHitRate: 0,
-  iteration: 0,
-  maxIterations: 25,
-  turnStartedAt: null,    // ms timestamp — drives elapsed counter
-  scrollOffset: 0,        // 0 = newest visible; increments to show older
-};
-
-function genId() {
-  return `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function reducer(state, action) {
-  switch (action.type) {
-    case "add_user_message":
-      return {
-        ...state,
-        finalized: [
-          ...state.finalized,
-          { id: genId(), role: "user", blocks: [{ type: "text", text: action.text }] },
-        ],
-      };
-    case "start_turn":
-      return {
-        ...state,
-        pending: { id: genId(), role: "assistant", blocks: [] },
-        status: "thinking",
-        statusMessage: "",
-        iteration: 0,
-        turnStartedAt: Date.now(),
-        scrollOffset: 0, // snap to bottom on new turn
-      };
-    case "add_plan":
-      if (!state.pending) return state;
-      return {
-        ...state,
-        pending: {
-          ...state.pending,
-          blocks: [...state.pending.blocks, { type: "plan", steps: action.steps }],
-        },
-      };
-    case "append_text": {
-      if (!state.pending) return state;
-      const blocks = [...state.pending.blocks];
-      const last = blocks[blocks.length - 1];
-      if (last && last.type === "text") {
-        blocks[blocks.length - 1] = { ...last, text: last.text + action.text };
-      } else {
-        blocks.push({ type: "text", text: action.text });
-      }
-      return { ...state, pending: { ...state.pending, blocks }, status: "thinking" };
-    }
-    case "tool_start": {
-      if (!state.pending) return state;
-      const block = {
-        type: "tool_call",
-        id: action.id,
-        tool: action.name,
-        args: action.args,
-        status: "running",
-        result: null,
-        expanded: false,
-      };
-      return {
-        ...state,
-        pending: { ...state.pending, blocks: [...state.pending.blocks, block] },
-        status: "tool_running",
-        currentTool: action.name,
-      };
-    }
-    case "tool_end": {
-      if (!state.pending) return state;
-      const blocks = state.pending.blocks.map((b) =>
-        b.type === "tool_call" && b.id === action.id
-          ? { ...b, status: action.error ? "error" : "done", result: action.result }
-          : b
-      );
-      const recent = [...state.recentTools, { name: action.name, status: action.error ? "error" : "done" }].slice(-5);
-      return { ...state, pending: { ...state.pending, blocks }, currentTool: null, recentTools: recent };
-    }
-    case "toggle_tool_expanded": {
-      if (!state.pending) return state;
-      const blocks = state.pending.blocks.map((b) =>
-        b.type === "tool_call" && b.id === action.id ? { ...b, expanded: !b.expanded } : b
-      );
-      return { ...state, pending: { ...state.pending, blocks } };
-    }
-    case "focus_tool": {
-      if (!state.pending) return state;
-      const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
-      if (toolBlocks.length === 0) return state;
-      let next = state.focusedToolIdx + action.delta;
-      if (next < 0) next = toolBlocks.length - 1;
-      if (next >= toolBlocks.length) next = 0;
-      return { ...state, focusedToolIdx: next };
-    }
-    case "commit_turn":
-      return state.pending
-        ? {
-            ...state,
-            finalized: [...state.finalized, state.pending],
-            pending: null,
-            status: "idle",
-            statusMessage: "",
-            focusedToolIdx: -1,
-            currentTool: null,
-            turnStartedAt: null,
-          }
-        : { ...state, status: "idle", statusMessage: "", turnStartedAt: null };
-    case "set_status_message":
-      return { ...state, statusMessage: action.message };
-    case "scroll": {
-      const total = state.finalized.length + (state.pending ? 1 : 0);
-      let next = state.scrollOffset + action.delta;
-      if (next < 0) next = 0;
-      if (next > Math.max(0, total - 1)) next = Math.max(0, total - 1);
-      return { ...state, scrollOffset: next };
-    }
-    case "scroll_reset":
-      return { ...state, scrollOffset: 0 };
-    case "set_prompt":
-      return {
-        ...state,
-        prompt: action.prompt,
-        status: action.prompt.kind === "edit" ? "awaiting_edit" : "awaiting_confirm",
-      };
-    case "clear_prompt":
-      return { ...state, prompt: null, status: state.pending ? "thinking" : "idle" };
-    case "set_cost":
-      return { ...state, cost: action.cost, tokens: action.tokens, cacheHitRate: action.cacheHitRate };
-    case "set_iteration":
-      return { ...state, iteration: action.iteration, maxIterations: action.maxIterations };
-    case "add_system":
-      return {
-        ...state,
-        finalized: [
-          ...state.finalized,
-          { id: genId(), role: "system", blocks: [{ type: "text", text: action.text }] },
-        ],
-      };
-    case "clear_history":
-      return { ...initialState, cost: state.cost, tokens: state.tokens, cacheHitRate: state.cacheHitRate };
-    default:
-      return state;
-  }
-}
 
 // ─── Main App ────────────────────────────────────────────────────────
 export function App() {
@@ -185,6 +39,29 @@ export function App() {
   const [abortController, setAbortController] = useState(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const { rows, columns } = useTerminalSize();
+
+  // Ref-backed text buffer: coalesce streaming tokens so React only re-renders
+  // every ~60ms instead of on every chunk (fixes TUI freeze on long turns).
+  const textBufferRef = useRef("");
+  const textFlushTimerRef = useRef(null);
+  const flushTextBuffer = useCallback(() => {
+    if (textFlushTimerRef.current) {
+      clearTimeout(textFlushTimerRef.current);
+      textFlushTimerRef.current = null;
+    }
+    const buf = textBufferRef.current;
+    if (buf) {
+      textBufferRef.current = "";
+      dispatch({ type: "append_text", text: buf });
+    }
+  }, []);
+  const scheduleTextFlush = useCallback(() => {
+    if (textFlushTimerRef.current) return;
+    textFlushTimerRef.current = setTimeout(() => {
+      textFlushTimerRef.current = null;
+      flushTextBuffer();
+    }, 60);
+  }, [flushTextBuffer]);
 
   // ── Layout math ────────────────────────────────────────────────────
   const sidebarWidth = columns >= 110 ? 32 : columns >= 90 ? 28 : 0;
@@ -210,6 +87,92 @@ export function App() {
     return () => resetPrompter();
   }, []);
 
+  // ── Tool live-stream wiring: forward stdout/stderr chunks to the reducer ──
+  useEffect(() => {
+    setToolStreamCallback((name, chunk) => {
+      dispatch({ type: "tool_stream_chunk", name, chunk });
+    });
+    return () => clearToolStreamCallback();
+  }, []);
+
+  // ── Mouse wheel → scroll; click → focus tool; drag → select for copy ──
+  useEffect(() => {
+    const chatTopY = 4;
+    let dragStartY = null;
+
+    setMouseCallback((event) => {
+      if (event.type === "wheel") {
+        if (event.direction === "up") dispatch({ type: "scroll", delta: 2 });
+        else if (event.direction === "down") dispatch({ type: "scroll", delta: -2 });
+        return;
+      }
+
+      if (event.type === "click" && event.button === "left") {
+        if (event.press) {
+          // Start tracking a potential drag.
+          dragStartY = event.y - chatTopY;
+          return;
+        }
+        // Release: either a click (no drag) or a drag completion.
+        const startRelY = dragStartY;
+        const endRelY = event.y - chatTopY;
+        dragStartY = null;
+
+        if (state.prompt) return;
+
+        const didDrag =
+          typeof startRelY === "number" &&
+          typeof endRelY === "number" &&
+          Math.abs(endRelY - startRelY) >= 1;
+
+        if (didDrag) {
+          // Copy selected rows.
+          const text = extractTextInRange(
+            Math.min(startRelY, endRelY),
+            Math.max(startRelY, endRelY)
+          );
+          dispatch({ type: "clear_selection" });
+          if (text.trim()) {
+            const ok = writeClipboard(text);
+            dispatch({
+              type: "set_toast",
+              text: ok
+                ? `📋 Copied ${text.length} chars to clipboard`
+                : "⚠️ Clipboard unsupported — enable OSC 52 in your terminal",
+              color: ok ? "green" : "yellow",
+            });
+          }
+          return;
+        }
+
+        // Plain click — focus + toggle tool block.
+        const relY = endRelY;
+        if (relY < 0) return;
+        const toolId = findToolAt(relY);
+        if (!toolId || !state.pending) return;
+        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+        const idx = toolBlocks.findIndex((b) => b.id === toolId);
+        if (idx >= 0) {
+          dispatch({ type: "focus_tool", delta: idx - state.focusedToolIdx });
+        }
+        dispatch({ type: "toggle_tool_expanded", id: toolId });
+        return;
+      }
+
+      if (event.type === "drag" && event.button === "left") {
+        if (dragStartY === null) dragStartY = event.y - chatTopY;
+        dispatch({
+          type: "set_selection",
+          selection: {
+            startY: Math.min(dragStartY, event.y - chatTopY),
+            endY: Math.max(dragStartY, event.y - chatTopY),
+          },
+        });
+      }
+    });
+    return () => clearMouseCallback();
+  }, [state.pending, state.prompt, state.focusedToolIdx]);
+
   // ── Live cost polling ──────────────────────────────────────────────
   useEffect(() => {
     const iv = setInterval(() => {
@@ -233,6 +196,13 @@ export function App() {
     const iv = setInterval(() => setElapsedMs(Date.now() - state.turnStartedAt), 200);
     return () => clearInterval(iv);
   }, [state.turnStartedAt]);
+
+  // ── Toast auto-dismiss (3s) ────────────────────────────────────────
+  useEffect(() => {
+    if (!state.toast) return;
+    const t = setTimeout(() => dispatch({ type: "clear_toast" }), 3000);
+    return () => clearTimeout(t);
+  }, [state.toast]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────
   useInput(async (input, key) => {
@@ -271,6 +241,25 @@ export function App() {
 
     if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
 
+    // 'y' (yank) — copy the most useful text depending on current context.
+    if (input === "y" && !key.ctrl && !key.meta) {
+      const text =
+        extractFocusedTool(state) ||
+        extractLastAssistant(state) ||
+        extractCurrentTurn(state);
+      if (text) {
+        const ok = writeClipboard(text);
+        dispatch({
+          type: "set_toast",
+          text: ok
+            ? `📋 Yanked ${text.length} chars`
+            : "⚠️ Clipboard unsupported",
+          color: ok ? "green" : "yellow",
+        });
+      }
+      return;
+    }
+
     // Tool focus/expand — only when not scrolled up (avoids overloading arrows)
     if (state.scrollOffset === 0) {
       if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
@@ -297,6 +286,40 @@ export function App() {
       }
 
       if (text.startsWith("/")) {
+        // /stats and /copy are UI-only commands — handled inline since their
+        // output lives in the TUI state, not stdout (which is muted).
+        if (text === "/stats") {
+          dispatch({ type: "add_user_message", text });
+          dispatch({ type: "toggle_stats" });
+          dispatch({ type: "add_system", text: "📊 Per-turn stats view toggled." });
+          return;
+        }
+        if (text.startsWith("/copy")) {
+          dispatch({ type: "add_user_message", text });
+          const mode = (text.split(" ")[1] || "last").trim();
+          let payload = "";
+          if (mode === "last") payload = extractLastAssistant(state);
+          else if (mode === "tool") payload = extractFocusedTool(state);
+          else if (mode === "turn") payload = extractCurrentTurn(state);
+          else if (mode === "all") payload = extractAll(state);
+          else {
+            dispatch({ type: "add_system", text: `Usage: /copy [last|tool|turn|all]` });
+            return;
+          }
+          if (!payload || !payload.trim()) {
+            dispatch({ type: "add_system", text: `📋 Nothing to copy (${mode}).` });
+            return;
+          }
+          const ok = writeClipboard(payload);
+          dispatch({
+            type: "set_toast",
+            text: ok
+              ? `📋 Copied ${payload.length} chars (${mode})`
+              : "⚠️ Clipboard unsupported",
+            color: ok ? "green" : "yellow",
+          });
+          return;
+        }
         dispatch({ type: "add_user_message", text });
         try {
           const handled = await handleSlashCommand(text);
@@ -311,6 +334,13 @@ export function App() {
 
       dispatch({ type: "add_user_message", text });
       dispatch({ type: "start_turn" });
+
+      // Snapshot metrics so we can compute deltas at turn end.
+      const turnStartStats = globalTracker.getStats(config.model);
+      const turnStartTokens =
+        turnStartStats.usage.generation.inputTokens + turnStartStats.usage.generation.outputTokens;
+      const turnStartCost = turnStartStats.cost.total;
+      const turnStartMs = Date.now();
 
       const controller = new AbortController();
       setAbortController(controller);
@@ -327,7 +357,10 @@ export function App() {
             dispatch({ type: "set_iteration", iteration: iter, maxIterations: config.maxIterations || 25 });
             dispatch({ type: "set_status_message", message: "" });
           },
-          onText: (t) => dispatch({ type: "append_text", text: t }),
+          onText: (t) => {
+            textBufferRef.current += t;
+            scheduleTextFlush();
+          },
           onToolCall: (name, args) => {
             const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             toolIdMap.set(name + JSON.stringify(args), id);
@@ -345,16 +378,30 @@ export function App() {
             });
           },
           onDone: () => {},
-          onError: (err) => dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` }),
+          onError: (err) => {
+            flushTextBuffer();
+            dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
+          },
         });
       } catch (err) {
+        flushTextBuffer();
         dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
       } finally {
+        flushTextBuffer();
         setAbortController(null);
-        dispatch({ type: "commit_turn" });
+        // Record per-turn delta for the sidebar sparkline.
+        const endStats = globalTracker.getStats(config.model);
+        const endTokens =
+          endStats.usage.generation.inputTokens + endStats.usage.generation.outputTokens;
+        const turnEntry = {
+          tokens: Math.max(0, endTokens - turnStartTokens),
+          cost: Math.max(0, endStats.cost.total - turnStartCost),
+          durationMs: Date.now() - turnStartMs,
+        };
+        dispatch({ type: "commit_turn", turnEntry });
       }
     },
-    [config, exit, abortController]
+    [config, exit, abortController, scheduleTextFlush, flushTextBuffer]
   );
 
   const handlePromptResolve = useCallback(
@@ -423,6 +470,8 @@ export function App() {
               tokens: state.tokens,
               cacheHitRate: state.cacheHitRate,
               mcpServers,
+              turnHistory: state.turnHistory,
+              statsExpanded: state.statsExpanded,
             })
           )
         : null
@@ -450,6 +499,8 @@ export function App() {
       elapsedMs,
       scrollOffset: state.scrollOffset,
       canCancel: !!abortController,
+      toast: state.toast,
+      selection: state.selection,
     })
   );
 }
