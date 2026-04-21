@@ -135,11 +135,12 @@ myagent 2>&1 | tee session.log
 
 ## Known Limitations
 
-- **Scrollback across turns.** Ink uses `<Static>` to commit finalized messages to terminal scrollback — you can scroll up after the session ends. The currently in-progress turn is dynamic and won't scroll until committed.
+- **Older messages auto-hidden**: to keep the chat pane bounded, older messages are dropped from view when they overflow. They remain in `memory.json` and can be exported via `/save`. A "… N earlier messages hidden" indicator appears when trimming is active.
 - **No mouse support** — by design, pure keyboard for better SSH/tmux compat.
 - **Tab autocomplete** not yet implemented — tracked for a future release.
-- **Very narrow terminals (< 80 cols)** — sidebar is hidden or wrapped awkwardly; prefer ≥ 100 cols.
+- **Very narrow terminals (< 90 cols)** — sidebar auto-hides to give the chat pane more room.
 - **Running console.log from deep code paths is suppressed** in TUI mode to avoid clobbering the UI. Tool activity surfaces via ToolCallBlock instead. If you're debugging, use `--no-tui` to see raw output.
+- **Alternate screen buffer** — the TUI enters a separate screen buffer (like vim / tmux / htop). When you exit, your original terminal scrollback is restored unchanged.
 
 ## Architecture Notes
 

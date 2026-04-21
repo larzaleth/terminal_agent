@@ -73,13 +73,25 @@ export function loadConfig() {
     try {
       const customConfig = JSON.parse(fs.readFileSync(customConfigPath, "utf-8"));
       _cachedConfig = { ...defaultConfig, ...customConfig };
-      return _cachedConfig;
     } catch (err) {
       console.warn(`⚠️ Failed to read agent.config.json: ${err.message}. Using defaults.`);
+      _cachedConfig = { ...defaultConfig };
     }
+  } else {
+    _cachedConfig = { ...defaultConfig };
   }
 
-  _cachedConfig = defaultConfig;
+  // Env vars override config.json (for ad-hoc per-session tweaks).
+  if (process.env.MYAGENT_PROVIDER) _cachedConfig.provider = process.env.MYAGENT_PROVIDER;
+  if (process.env.MYAGENT_MODEL) {
+    _cachedConfig.model = process.env.MYAGENT_MODEL;
+    // Mirror to planner/summary if they weren't explicitly set elsewhere.
+    if (!process.env.MYAGENT_PLANNER_MODEL) _cachedConfig.plannerModel = process.env.MYAGENT_MODEL;
+    if (!process.env.MYAGENT_SUMMARY_MODEL) _cachedConfig.summaryModel = process.env.MYAGENT_MODEL;
+  }
+  if (process.env.MYAGENT_PLANNER_MODEL) _cachedConfig.plannerModel = process.env.MYAGENT_PLANNER_MODEL;
+  if (process.env.MYAGENT_SUMMARY_MODEL) _cachedConfig.summaryModel = process.env.MYAGENT_SUMMARY_MODEL;
+
   return _cachedConfig;
 }
 
