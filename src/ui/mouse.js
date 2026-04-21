@@ -29,12 +29,12 @@ export function clearMouseCallback() {
   cb = null;
 }
 
-function classify(btnRaw) {
+function classify(btnRaw, x, y, press) {
   const btn = btnRaw & 0b01000011; // strip modifier bits, keep button + wheel flag
-  if (btn === 64) return { type: "wheel", direction: "up" };
-  if (btn === 65) return { type: "wheel", direction: "down" };
-  if (btn === 0) return { type: "click", button: "left" };
-  if (btn === 2) return { type: "click", button: "right" };
+  if (btn === 64) return { type: "wheel", direction: "up", x, y };
+  if (btn === 65) return { type: "wheel", direction: "down", x, y };
+  if (btn === 0) return { type: "click", button: "left", x, y, press };
+  if (btn === 2) return { type: "click", button: "right", x, y, press };
   return null;
 }
 
@@ -51,7 +51,13 @@ function stripMouseSequences(chunk) {
   while ((m = SGR_RE.exec(chunk)) !== null) {
     parts.push(chunk.slice(lastIdx, m.index));
     lastIdx = m.index + m[0].length;
-    const event = classify(parseInt(m[1], 10));
+    const terminator = m[0][m[0].length - 1]; // 'M' = press, 'm' = release
+    const event = classify(
+      parseInt(m[1], 10),
+      parseInt(m[2], 10),
+      parseInt(m[3], 10),
+      terminator === "M"
+    );
     if (event && cb) {
       try {
         cb(event);

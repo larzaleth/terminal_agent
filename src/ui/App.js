@@ -15,6 +15,7 @@ import { useTerminalSize } from "./useTerminalSize.js";
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
 import { setMouseCallback, clearMouseCallback } from "./mouse.js";
+import { findToolAt } from "./clickRegistry.js";
 import { reducer, initialState } from "./reducer.js";
 import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
@@ -87,15 +88,35 @@ export function App() {
     return () => clearToolStreamCallback();
   }, []);
 
-  // ── Mouse wheel → scroll chat history ─────────────────────────────
+  // ── Mouse wheel → scroll chat history; click → focus/toggle tool block ──
   useEffect(() => {
+    // Chat pane starts below the header (3 rows incl. border) and has its own
+    // round border (+1 row). Terminal Y is 1-indexed from xterm mouse reports.
+    // chatTopY: first interactive row of the chat pane content (approx).
+    const chatTopY = 4;
     setMouseCallback((event) => {
-      if (event.type !== "wheel") return;
-      if (event.direction === "up") dispatch({ type: "scroll", delta: 2 });
-      else if (event.direction === "down") dispatch({ type: "scroll", delta: -2 });
+      if (event.type === "wheel") {
+        if (event.direction === "up") dispatch({ type: "scroll", delta: 2 });
+        else if (event.direction === "down") dispatch({ type: "scroll", delta: -2 });
+        return;
+      }
+      if (event.type === "click" && event.button === "left" && event.press) {
+        if (state.prompt) return; // let prompts own the input while active
+        const relY = event.y - chatTopY;
+        if (relY < 0) return;
+        const toolId = findToolAt(relY);
+        if (!toolId || !state.pending) return;
+        // Move focus + toggle expand in one click.
+        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+        const idx = toolBlocks.findIndex((b) => b.id === toolId);
+        if (idx >= 0) {
+          dispatch({ type: "focus_tool", delta: idx - state.focusedToolIdx });
+        }
+        dispatch({ type: "toggle_tool_expanded", id: toolId });
+      }
     });
     return () => clearMouseCallback();
-  }, []);
+  }, [state.pending, state.prompt, state.focusedToolIdx]);
 
   // ── Live cost polling ──────────────────────────────────────────────
   useEffect(() => {

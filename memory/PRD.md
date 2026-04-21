@@ -63,28 +63,33 @@ Node.js CLI application (not a web app) with a rich Terminal UI powered by `ink`
 - **UX polish**: `ToolCallBlock` renders `liveOutput` while a tool is running
   so the user sees progress; falls back to `(running…)` placeholder.
 
-### Round 2 — Features
-- **Mouse support** (`src/ui/mouse.js`): SGR 1006 wheel events are intercepted
-  before ink sees them, translated into scroll actions via a callback emitter.
-  Enabled/disabled inside `src/ui/run.js` around the TUI lifecycle. Safe no-op
-  when stdout is not a TTY.
-- **Reducer refactor**: `initialState` + `reducer` extracted from `App.js`
-  into `src/ui/reducer.js`. App.js dropped from 521 → ~385 lines and the
-  reducer is now unit-testable in isolation (`tests/reducer.test.js` covers
-  11 reducer actions incl. turn-history cap, stream chunk trim, scroll clamp).
-- **`/stats` + per-turn sparkline**: each turn now captures token/cost/duration
-  deltas, pushed into `state.turnHistory` (rolling last 20). New
-  `src/ui/sparkline.js` renders an ASCII bar chart in the sidebar. `/stats`
-  slash command toggles between compact ("5 turn(s)") and expanded view with
-  Last/Avg breakdown for tokens, cost, and time.
+### Round 3 — UX & architecture
+- **Mouse click-to-focus tool blocks**: left-click on a tool block in the chat
+  pane now toggles its expanded state and moves focus to it. Implemented via:
+  - `src/ui/clickRegistry.js` — module-level map of `{toolId → Y range}`
+  - `MessageList` populates it on each render (via `useEffect`) using
+    `computeToolRegions()` which estimates row-span per block
+  - `App.js` click handler subtracts chat-pane chrome offset and dispatches
+    `focus_tool` + `toggle_tool_expanded` in one gesture
+  - Wheel-up/down still scrolls history (2 rows per tick)
+- **Mouse events carry x/y + press/release**: `mouse.js` now returns full
+  coordinates so future click features can layer on without protocol work.
+- **slash.js refactor**: dispatcher-only (43 lines); each command lives in
+  `src/commands/handlers/*.js` (11 files, ≤37 lines each). New commands are
+  now additive: drop a handler file + register in the `HANDLERS` map.
+  Exposed `SLASH_COMMANDS` array for upcoming tab-autocomplete work.
 
-All of the above shipped with tests: **77 tests total**, lint clean.
+All changes land with **88 tests passing** (11 new reducer tests, 6 mouse/
+sparkline, 4 sidebar/chart, 6 slash registry, 5 click-region).
 
 ## Backlog (prioritized)
-- **P2**: Tab autocomplete for slash commands inside `InputBox.js`.
+- **P2**: Tab autocomplete for slash commands (`SLASH_COMMANDS` array is
+  already exported from `src/commands/slash.js`; just needs `InputBox.js`
+  wiring via `ink-text-input`'s `onChange` + Tab key detection).
 - **P3**: Theme system (light / dark / high-contrast) via env or `/theme`.
-- **P3**: Mouse click-to-focus tool blocks (wheel already wired).
-- **Refactor**: Split `commands/slash.js` per-command once it grows past ~250 lines.
+- **P3**: Refine mouse click target Y — currently uses a rough chatTopY=4
+  offset; could read from rendered layout once ink exposes measurements.
+- **P4**: Drag-to-select + copy-to-clipboard via `clipboardy`.
 
 ## Testing
 - `yarn test` — node native test runner + `ink-testing-library` (51 tests)
