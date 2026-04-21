@@ -97,6 +97,22 @@ test("reducer: toggle_stats flips statsExpanded", () => {
   assert.equal(s.statsExpanded, false);
 });
 
+test("reducer: set_selection / clear_selection updates state", () => {
+  let s = reducer(initialState, { type: "set_selection", selection: { startY: 2, endY: 8 } });
+  assert.deepEqual(s.selection, { startY: 2, endY: 8 });
+  s = reducer(s, { type: "clear_selection" });
+  assert.equal(s.selection, null);
+});
+
+test("reducer: set_toast / clear_toast lifecycle", () => {
+  let s = reducer(initialState, { type: "set_toast", text: "copied!", color: "green" });
+  assert.equal(s.toast.text, "copied!");
+  assert.equal(s.toast.color, "green");
+  assert.ok(typeof s.toast.ts === "number");
+  s = reducer(s, { type: "clear_toast" });
+  assert.equal(s.toast, null);
+});
+
 test("reducer: scroll clamps between 0 and (total-1)", () => {
   let s = { ...initialState, finalized: [1, 2, 3].map((n) => ({ id: `x${n}`, role: "user", blocks: [] })) };
   s = reducer(s, { type: "scroll", delta: 100 });

@@ -15,7 +15,14 @@ import { useTerminalSize } from "./useTerminalSize.js";
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
 import { setMouseCallback, clearMouseCallback } from "./mouse.js";
-import { findToolAt } from "./clickRegistry.js";
+import { findToolAt, extractTextInRange } from "./clickRegistry.js";
+import {
+  writeClipboard,
+  extractLastAssistant,
+  extractFocusedTool,
+  extractCurrentTurn,
+  extractAll,
+} from "./clipboard.js";
 import { reducer, initialState } from "./reducer.js";
 import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
@@ -88,31 +95,79 @@ export function App() {
     return () => clearToolStreamCallback();
   }, []);
 
-  // ── Mouse wheel → scroll chat history; click → focus/toggle tool block ──
+  // ── Mouse wheel → scroll; click → focus tool; drag → select for copy ──
   useEffect(() => {
-    // Chat pane starts below the header (3 rows incl. border) and has its own
-    // round border (+1 row). Terminal Y is 1-indexed from xterm mouse reports.
-    // chatTopY: first interactive row of the chat pane content (approx).
     const chatTopY = 4;
+    let dragStartY = null;
+
     setMouseCallback((event) => {
       if (event.type === "wheel") {
         if (event.direction === "up") dispatch({ type: "scroll", delta: 2 });
         else if (event.direction === "down") dispatch({ type: "scroll", delta: -2 });
         return;
       }
-      if (event.type === "click" && event.button === "left" && event.press) {
-        if (state.prompt) return; // let prompts own the input while active
-        const relY = event.y - chatTopY;
+
+      if (event.type === "click" && event.button === "left") {
+        if (event.press) {
+          // Start tracking a potential drag.
+          dragStartY = event.y - chatTopY;
+          return;
+        }
+        // Release: either a click (no drag) or a drag completion.
+        const startRelY = dragStartY;
+        const endRelY = event.y - chatTopY;
+        dragStartY = null;
+
+        if (state.prompt) return;
+
+        const didDrag =
+          typeof startRelY === "number" &&
+          typeof endRelY === "number" &&
+          Math.abs(endRelY - startRelY) >= 1;
+
+        if (didDrag) {
+          // Copy selected rows.
+          const text = extractTextInRange(
+            Math.min(startRelY, endRelY),
+            Math.max(startRelY, endRelY)
+          );
+          dispatch({ type: "clear_selection" });
+          if (text.trim()) {
+            const ok = writeClipboard(text);
+            dispatch({
+              type: "set_toast",
+              text: ok
+                ? `📋 Copied ${text.length} chars to clipboard`
+                : "⚠️ Clipboard unsupported — enable OSC 52 in your terminal",
+              color: ok ? "green" : "yellow",
+            });
+          }
+          return;
+        }
+
+        // Plain click — focus + toggle tool block.
+        const relY = endRelY;
         if (relY < 0) return;
         const toolId = findToolAt(relY);
         if (!toolId || !state.pending) return;
-        // Move focus + toggle expand in one click.
         const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
         const idx = toolBlocks.findIndex((b) => b.id === toolId);
         if (idx >= 0) {
           dispatch({ type: "focus_tool", delta: idx - state.focusedToolIdx });
         }
         dispatch({ type: "toggle_tool_expanded", id: toolId });
+        return;
+      }
+
+      if (event.type === "drag" && event.button === "left") {
+        if (dragStartY === null) dragStartY = event.y - chatTopY;
+        dispatch({
+          type: "set_selection",
+          selection: {
+            startY: Math.min(dragStartY, event.y - chatTopY),
+            endY: Math.max(dragStartY, event.y - chatTopY),
+          },
+        });
       }
     });
     return () => clearMouseCallback();
@@ -141,6 +196,13 @@ export function App() {
     const iv = setInterval(() => setElapsedMs(Date.now() - state.turnStartedAt), 200);
     return () => clearInterval(iv);
   }, [state.turnStartedAt]);
+
+  // ── Toast auto-dismiss (3s) ────────────────────────────────────────
+  useEffect(() => {
+    if (!state.toast) return;
+    const t = setTimeout(() => dispatch({ type: "clear_toast" }), 3000);
+    return () => clearTimeout(t);
+  }, [state.toast]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────
   useInput(async (input, key) => {
@@ -179,6 +241,25 @@ export function App() {
 
     if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
 
+    // 'y' (yank) — copy the most useful text depending on current context.
+    if (input === "y" && !key.ctrl && !key.meta) {
+      const text =
+        extractFocusedTool(state) ||
+        extractLastAssistant(state) ||
+        extractCurrentTurn(state);
+      if (text) {
+        const ok = writeClipboard(text);
+        dispatch({
+          type: "set_toast",
+          text: ok
+            ? `📋 Yanked ${text.length} chars`
+            : "⚠️ Clipboard unsupported",
+          color: ok ? "green" : "yellow",
+        });
+      }
+      return;
+    }
+
     // Tool focus/expand — only when not scrolled up (avoids overloading arrows)
     if (state.scrollOffset === 0) {
       if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
@@ -205,12 +286,38 @@ export function App() {
       }
 
       if (text.startsWith("/")) {
-        // /stats is a UI-only command — handled inline since its output
-        // lives in the sidebar, not stdout (which is muted under the TUI).
+        // /stats and /copy are UI-only commands — handled inline since their
+        // output lives in the TUI state, not stdout (which is muted).
         if (text === "/stats") {
           dispatch({ type: "add_user_message", text });
           dispatch({ type: "toggle_stats" });
           dispatch({ type: "add_system", text: "📊 Per-turn stats view toggled." });
+          return;
+        }
+        if (text.startsWith("/copy")) {
+          dispatch({ type: "add_user_message", text });
+          const mode = (text.split(" ")[1] || "last").trim();
+          let payload = "";
+          if (mode === "last") payload = extractLastAssistant(state);
+          else if (mode === "tool") payload = extractFocusedTool(state);
+          else if (mode === "turn") payload = extractCurrentTurn(state);
+          else if (mode === "all") payload = extractAll(state);
+          else {
+            dispatch({ type: "add_system", text: `Usage: /copy [last|tool|turn|all]` });
+            return;
+          }
+          if (!payload || !payload.trim()) {
+            dispatch({ type: "add_system", text: `📋 Nothing to copy (${mode}).` });
+            return;
+          }
+          const ok = writeClipboard(payload);
+          dispatch({
+            type: "set_toast",
+            text: ok
+              ? `📋 Copied ${payload.length} chars (${mode})`
+              : "⚠️ Clipboard unsupported",
+            color: ok ? "green" : "yellow",
+          });
           return;
         }
         dispatch({ type: "add_user_message", text });
@@ -392,6 +499,8 @@ export function App() {
       elapsedMs,
       scrollOffset: state.scrollOffset,
       canCancel: !!abortController,
+      toast: state.toast,
+      selection: state.selection,
     })
   );
 }

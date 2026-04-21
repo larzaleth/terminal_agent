@@ -63,33 +63,42 @@ Node.js CLI application (not a web app) with a rich Terminal UI powered by `ink`
 - **UX polish**: `ToolCallBlock` renders `liveOutput` while a tool is running
   so the user sees progress; falls back to `(running…)` placeholder.
 
-### Round 3 — UX & architecture
-- **Mouse click-to-focus tool blocks**: left-click on a tool block in the chat
-  pane now toggles its expanded state and moves focus to it. Implemented via:
-  - `src/ui/clickRegistry.js` — module-level map of `{toolId → Y range}`
-  - `MessageList` populates it on each render (via `useEffect`) using
-    `computeToolRegions()` which estimates row-span per block
-  - `App.js` click handler subtracts chat-pane chrome offset and dispatches
-    `focus_tool` + `toggle_tool_expanded` in one gesture
-  - Wheel-up/down still scrolls history (2 rows per tick)
-- **Mouse events carry x/y + press/release**: `mouse.js` now returns full
-  coordinates so future click features can layer on without protocol work.
-- **slash.js refactor**: dispatcher-only (43 lines); each command lives in
-  `src/commands/handlers/*.js` (11 files, ≤37 lines each). New commands are
-  now additive: drop a handler file + register in the `HANDLERS` map.
-  Exposed `SLASH_COMMANDS` array for upcoming tab-autocomplete work.
+### Round 4 — Drag-to-select + copy-to-clipboard
+- **OSC 52 clipboard writer** (`src/ui/clipboard.js`): universal terminal
+  escape sequence — no native binary or auth needed, works over SSH and
+  inside tmux (when `set-clipboard on`). 75 KB payload cap with a visible
+  truncation marker.
+- **Drag detection**: mouse reporting upgraded from mode 1000 → 1002 so
+  motion with a button held is reported. `mouse.js` now emits
+  `{type: "drag", x, y}` events; press tracks `dragStartY`; release
+  with Δy≥1 triggers the copy, release with Δy=0 is treated as a click.
+- **Selection state + live footer**: reducer gained `selection`,
+  `toast`, and two actions per pair. Footer shows "📐 Selecting N rows —
+  release to copy" during drag, and a 3-second toast ("📋 Copied 142
+  chars") on completion.
+- **Text extraction**: `MessageList` populates `blockRegions` alongside
+  `toolRegions` on every render, so drag release can resolve Y range →
+  block text without touching any screen buffer.
+- **`y` yank shortcut**: single keypress copies the most relevant chunk —
+  focused tool result first, else last assistant message, else current
+  turn. Works in idle and scroll modes.
+- **`/copy [last|tool|turn|all]` command**: explicit TUI-only subcommand
+  intercepted in `App.js` (stdout is muted). Non-TUI invocation prints
+  a helpful hint.
 
-All changes land with **88 tests passing** (11 new reducer tests, 6 mouse/
-sparkline, 4 sidebar/chart, 6 slash registry, 5 click-region).
+Tests: **+15 tests** covering OSC 52 round-trip, extractors, drag sequence
+parsing, reducer selection/toast actions, block region range extraction.
+Total **103 tests passing** (`yarn test` now runs `--test-concurrency=1`
+to sidestep Node's flaky IPC serializer).
 
 ## Backlog (prioritized)
-- **P2**: Tab autocomplete for slash commands (`SLASH_COMMANDS` array is
-  already exported from `src/commands/slash.js`; just needs `InputBox.js`
-  wiring via `ink-text-input`'s `onChange` + Tab key detection).
+- **P2**: Tab autocomplete for slash commands (`SLASH_COMMANDS` exported).
+- **P2**: Command palette mode (Ctrl+K) with fuzzy search.
 - **P3**: Theme system (light / dark / high-contrast) via env or `/theme`.
+- **P3**: Visual highlight of the selection range during drag (needs Ink
+  layout measurements; footer-only feedback today).
 - **P3**: Refine mouse click target Y — currently uses a rough chatTopY=4
   offset; could read from rendered layout once ink exposes measurements.
-- **P4**: Drag-to-select + copy-to-clipboard via `clipboardy`.
 
 ## Testing
 - `yarn test` — node native test runner + `ink-testing-library` (51 tests)

@@ -19,6 +19,8 @@ export const initialState = {
   scrollOffset: 0,        // 0 = newest visible; increments to show older
   turnHistory: [],        // [{tokens, cost, durationMs, ts}, ...] last ~20 turns
   statsExpanded: false,   // /stats toggles verbose sidebar
+  selection: null,        // {startY, endY} chat-pane-relative (drag-to-select)
+  toast: null,            // {text, color, ts} ephemeral notification
 };
 
 export function genId() {
@@ -202,6 +204,14 @@ export function reducer(state, action) {
       };
     case "toggle_stats":
       return { ...state, statsExpanded: !state.statsExpanded };
+    case "set_selection":
+      return { ...state, selection: action.selection };
+    case "clear_selection":
+      return { ...state, selection: null };
+    case "set_toast":
+      return { ...state, toast: { text: action.text, color: action.color || "cyan", ts: Date.now() } };
+    case "clear_toast":
+      return { ...state, toast: null };
     case "clear_history":
       return {
         ...initialState,

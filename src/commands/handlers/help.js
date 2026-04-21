@@ -13,7 +13,10 @@ export async function helpCommand() {
   ${chalk.white("/provider [name]")}      Show or switch LLM provider (gemini/openai/anthropic)
   ${chalk.white("/save [file]")}          Export session transcript to markdown
   ${chalk.white("/stats")}                Toggle per-turn token/cost chart in sidebar (TUI only)
+  ${chalk.white("/copy [last|tool|turn|all]")}  Copy to clipboard via OSC 52 (TUI only)
   ${chalk.white("/mcp")}                  List connected MCP servers and their tools
+  ${chalk.white("y (in TUI)")}            Yank focused tool / last reply to clipboard
+  ${chalk.white("drag (in TUI)")}         Mouse-drag any rows to copy their text
   ${chalk.white("exit / quit")}           Exit the agent
 `));
 }

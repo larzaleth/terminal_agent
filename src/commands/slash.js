@@ -17,6 +17,7 @@ import { modelCommand } from "./handlers/model.js";
 import { providerCommand } from "./handlers/provider.js";
 import { saveCommand } from "./handlers/save.js";
 import { mcpCommand } from "./handlers/mcp.js";
+import { copyCommand } from "./handlers/copy.js";
 
 const HANDLERS = {
   "/help": helpCommand,
@@ -30,6 +31,7 @@ const HANDLERS = {
   "/provider": providerCommand,
   "/save": saveCommand,
   "/mcp": mcpCommand,
+  "/copy": copyCommand,
 };
 
 export const SLASH_COMMANDS = Object.keys(HANDLERS);

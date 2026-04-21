@@ -42,6 +42,32 @@ test("mouse: modifier bits are masked when classifying wheel", () => {
   assert.equal(events[0].direction, "up");
 });
 
+test("mouse: motion with left button held is reported as drag", () => {
+  // Button 0 + motion bit (32) = 32.
+  const { events } = _parseForTest("\x1b[<32;15;8M");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "drag");
+  assert.equal(events[0].button, "left");
+  assert.equal(events[0].x, 15);
+  assert.equal(events[0].y, 8);
+});
+
+test("mouse: press + drag + release sequence fires in order", () => {
+  const { events } = _parseForTest(
+    "\x1b[<0;5;5M" + // press at (5,5)
+    "\x1b[<32;5;7M" + // drag to (5,7)
+    "\x1b[<32;5;10M" + // drag to (5,10)
+    "\x1b[<0;5;10m"   // release (lowercase m = release)
+  );
+  assert.equal(events.length, 4);
+  assert.equal(events[0].type, "click");
+  assert.equal(events[0].press, true);
+  assert.equal(events[1].type, "drag");
+  assert.equal(events[2].type, "drag");
+  assert.equal(events[3].type, "click");
+  assert.equal(events[3].press, false);
+});
+
 test("sparkline: empty array returns empty string", () => {
   assert.equal(sparkline([]), "");
 });

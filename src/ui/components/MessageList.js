@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Box, Text } from "ink";
 import { h } from "../h.js";
 import { Message } from "./Message.js";
-import { setToolRegions } from "../clickRegistry.js";
+import { setToolRegions, setBlockRegions } from "../clickRegistry.js";
 
 /**
  * Bounded + scrollable message list.
@@ -21,9 +21,11 @@ export function MessageList({ finalized, pending, focusedToolId, maxRows, scroll
     ? windowWithOffset(all, maxRows, scrollOffset)
     : { visible: [], hiddenAbove: 0, hiddenBelow: 0 };
   const regions = hasMessages ? computeToolRegions(visible, hiddenAbove > 0) : [];
+  const blockRegions = hasMessages ? computeBlockRegions(visible, hiddenAbove > 0) : [];
 
   useEffect(() => {
     setToolRegions(regions);
+    setBlockRegions(blockRegions);
   });
 
   if (!hasMessages) {
@@ -116,6 +118,41 @@ function computeToolRegions(visible, hasHeader) {
   return regions;
 }
 
+// Compute [{startY, endY, text}] for every block so drag-select can extract
+// raw text across arbitrary Y ranges.
+function computeBlockRegions(visible, hasHeader) {
+  const regions = [];
+  let y = 0;
+  if (hasHeader) y += 1;
+  for (const msg of visible) {
+    const rolePrefix = msg.role === "user" ? "🧑 You" : msg.role === "assistant" ? "🤖 Assistant" : msg.role;
+    regions.push({ startY: y, endY: y, text: rolePrefix });
+    y += 1;
+    for (const b of msg.blocks || []) {
+      const rows = estimateBlockRows(b);
+      regions.push({ startY: y, endY: y + rows - 1, text: blockToText(b) });
+      y += rows;
+    }
+    y += 1;
+  }
+  return regions;
+}
+
+function blockToText(b) {
+  if (!b) return "";
+  if (b.type === "text") return b.text || "";
+  if (b.type === "plan") {
+    return (b.steps || []).map((s, i) => `${i + 1}. ${s.step}`).join("\n");
+  }
+  if (b.type === "tool_call") {
+    const args = b.args ? JSON.stringify(b.args) : "";
+    const result = typeof b.result === "string" ? b.result : "";
+    const header = `[${b.tool}] ${args}`;
+    return result ? `${header}\n${result}` : header;
+  }
+  return "";
+}
+
 function windowWithOffset(all, maxRows, scrollOffset) {
   const budget = maxRows && maxRows > 0 ? maxRows : Infinity;
 
@@ -149,4 +186,4 @@ function windowWithOffset(all, maxRows, scrollOffset) {
 }
 
 // Exported for unit tests.
-export { computeToolRegions, estimateRows };
+export { computeToolRegions, computeBlockRegions, estimateRows };

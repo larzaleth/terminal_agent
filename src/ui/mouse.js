@@ -11,8 +11,8 @@
 // Wheel buttons are 64 (up) / 65 (down). Modifier bits (shift/ctrl/alt) are
 // OR'd into the high bits but we mask them away when classifying.
 
-const ENABLE = "\x1b[?1000h\x1b[?1006h";
-const DISABLE = "\x1b[?1006l\x1b[?1000l";
+const ENABLE = "\x1b[?1002h\x1b[?1006h";
+const DISABLE = "\x1b[?1006l\x1b[?1002l";
 
 // eslint-disable-next-line no-control-regex
 const SGR_RE = /\x1b\[<(\d+);(\d+);(\d+)[Mm]/g;
@@ -30,11 +30,21 @@ export function clearMouseCallback() {
 }
 
 function classify(btnRaw, x, y, press) {
-  const btn = btnRaw & 0b01000011; // strip modifier bits, keep button + wheel flag
+  const isMotion = (btnRaw & 32) !== 0; // SGR motion bit
+  const btn = btnRaw & 0b01000011; // strip modifier + motion bits, keep button + wheel flag
   if (btn === 64) return { type: "wheel", direction: "up", x, y };
   if (btn === 65) return { type: "wheel", direction: "down", x, y };
-  if (btn === 0) return { type: "click", button: "left", x, y, press };
-  if (btn === 2) return { type: "click", button: "right", x, y, press };
+  if (btn === 0) {
+    if (isMotion) return { type: "drag", button: "left", x, y };
+    return { type: "click", button: "left", x, y, press };
+  }
+  if (btn === 2) {
+    if (isMotion) return { type: "drag", button: "right", x, y };
+    return { type: "click", button: "right", x, y, press };
+  }
+  // Release event (btn === 3 in some encodings) — mode 1006 uses lowercase `m`
+  // with the original button id, so this branch rarely hits; `press=false`
+  // on the click path covers releases.
   return null;
 }
 
