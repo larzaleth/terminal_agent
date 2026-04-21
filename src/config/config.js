@@ -13,9 +13,9 @@ import {
 // ===========================
 const defaultConfig = {
   provider: "gemini",
-  model: "gemini-2.5-flash",
-  plannerModel: "gemini-2.5-flash",
-  summaryModel: "gemini-2.5-flash",
+  model: "gemini-3-flash-preview",
+  plannerModel: "gemini-3.1-preview",
+  summaryModel: "gemini-3-flash-lite-preview",
   maxIterations: MAX_ITERATIONS_DEFAULT,
   maxMemoryTurns: MAX_MEMORY_TURNS_DEFAULT,
   mcpServers: {},
@@ -89,8 +89,10 @@ export function loadConfig() {
     if (!process.env.MYAGENT_PLANNER_MODEL) _cachedConfig.plannerModel = process.env.MYAGENT_MODEL;
     if (!process.env.MYAGENT_SUMMARY_MODEL) _cachedConfig.summaryModel = process.env.MYAGENT_MODEL;
   }
-  if (process.env.MYAGENT_PLANNER_MODEL) _cachedConfig.plannerModel = process.env.MYAGENT_PLANNER_MODEL;
-  if (process.env.MYAGENT_SUMMARY_MODEL) _cachedConfig.summaryModel = process.env.MYAGENT_SUMMARY_MODEL;
+  if (process.env.MYAGENT_PLANNER_MODEL)
+    _cachedConfig.plannerModel = process.env.MYAGENT_PLANNER_MODEL;
+  if (process.env.MYAGENT_SUMMARY_MODEL)
+    _cachedConfig.summaryModel = process.env.MYAGENT_SUMMARY_MODEL;
 
   return _cachedConfig;
 }
