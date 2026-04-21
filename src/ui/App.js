@@ -33,6 +33,8 @@ const initialState = {
   cacheHitRate: 0,
   iteration: 0,
   maxIterations: 25,
+  turnStartedAt: null,    // ms timestamp — drives elapsed counter
+  scrollOffset: 0,        // 0 = newest visible; increments to show older
 };
 
 function genId() {
@@ -54,7 +56,10 @@ function reducer(state, action) {
         ...state,
         pending: { id: genId(), role: "assistant", blocks: [] },
         status: "thinking",
+        statusMessage: "",
         iteration: 0,
+        turnStartedAt: Date.now(),
+        scrollOffset: 0, // snap to bottom on new turn
       };
     case "add_plan":
       if (!state.pending) return state;
@@ -127,10 +132,23 @@ function reducer(state, action) {
             finalized: [...state.finalized, state.pending],
             pending: null,
             status: "idle",
+            statusMessage: "",
             focusedToolIdx: -1,
             currentTool: null,
+            turnStartedAt: null,
           }
-        : { ...state, status: "idle" };
+        : { ...state, status: "idle", statusMessage: "", turnStartedAt: null };
+    case "set_status_message":
+      return { ...state, statusMessage: action.message };
+    case "scroll": {
+      const total = state.finalized.length + (state.pending ? 1 : 0);
+      let next = state.scrollOffset + action.delta;
+      if (next < 0) next = 0;
+      if (next > Math.max(0, total - 1)) next = Math.max(0, total - 1);
+      return { ...state, scrollOffset: next };
+    }
+    case "scroll_reset":
+      return { ...state, scrollOffset: 0 };
     case "set_prompt":
       return {
         ...state,
@@ -164,14 +182,13 @@ export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [config, setConfig] = useState(() => loadConfig());
   const [mcpServers, setMcpServers] = useState([]);
+  const [abortController, setAbortController] = useState(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const { rows, columns } = useTerminalSize();
 
   // ── Layout math ────────────────────────────────────────────────────
-  // Reserve rows for: Header (3) + input/prompt (≥3) + Footer (1) + borders
   const sidebarWidth = columns >= 110 ? 32 : columns >= 90 ? 28 : 0;
   const showSidebar = sidebarWidth > 0;
-
-  // Approx rows used by chrome elements (header + input + footer + paddings).
   const chromeRows = state.prompt?.kind === "edit" ? 20 : 7;
   const chatMaxRows = Math.max(6, rows - chromeRows);
 
@@ -207,21 +224,66 @@ export function App() {
     return () => clearInterval(iv);
   }, [config.model]);
 
+  // ── Elapsed-time counter for long-running turns ────────────────────
+  useEffect(() => {
+    if (!state.turnStartedAt) {
+      setElapsedMs(0);
+      return;
+    }
+    const iv = setInterval(() => setElapsedMs(Date.now() - state.turnStartedAt), 200);
+    return () => clearInterval(iv);
+  }, [state.turnStartedAt]);
+
   // ── Global keyboard shortcuts ──────────────────────────────────────
   useInput(async (input, key) => {
+    // Ctrl+C always exits
     if (key.ctrl && input === "c") {
       await shutdownMcp().catch(() => {});
       exit();
       return;
     }
+
+    // Esc: cancel the active turn (or dismiss prompt which handles itself)
+    if (key.escape && !state.prompt) {
+      if (abortController) {
+        abortController.abort();
+        dispatch({ type: "set_status_message", message: "Cancelling — finishing current step…" });
+      }
+      return;
+    }
+
     if (state.prompt) return;
+
+    // Scrolling through chat history — always available
+    if (key.pageUp) {
+      dispatch({ type: "scroll", delta: 3 });
+      return;
+    }
+    if (key.pageDown) {
+      dispatch({ type: "scroll", delta: -3 });
+      return;
+    }
+    if (input === "G" && !key.ctrl) {
+      // vim-ish: G jumps to bottom
+      dispatch({ type: "scroll_reset" });
+      return;
+    }
+
     if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
-    if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
-    if (key.downArrow) dispatch({ type: "focus_tool", delta: 1 });
-    if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
-      const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
-      const target = toolBlocks[state.focusedToolIdx];
-      if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
+
+    // Tool focus/expand — only when not scrolled up (avoids overloading arrows)
+    if (state.scrollOffset === 0) {
+      if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
+      if (key.downArrow) dispatch({ type: "focus_tool", delta: 1 });
+      if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
+        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+        const target = toolBlocks[state.focusedToolIdx];
+        if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
+      }
+    } else {
+      // While scrolled up, arrows also scroll
+      if (key.upArrow) dispatch({ type: "scroll", delta: 1 });
+      if (key.downArrow) dispatch({ type: "scroll", delta: -1 });
     }
   });
 
@@ -250,15 +312,20 @@ export function App() {
       dispatch({ type: "add_user_message", text });
       dispatch({ type: "start_turn" });
 
+      const controller = new AbortController();
+      setAbortController(controller);
+
       const toolIdMap = new Map();
       let iter = 0;
 
       try {
         await runAgent(text, {
+          signal: controller.signal,
           onPlan: (plan) => dispatch({ type: "add_plan", steps: plan }),
           onThinking: () => {
             iter += 1;
             dispatch({ type: "set_iteration", iteration: iter, maxIterations: config.maxIterations || 25 });
+            dispatch({ type: "set_status_message", message: "" });
           },
           onText: (t) => dispatch({ type: "append_text", text: t }),
           onToolCall: (name, args) => {
@@ -271,16 +338,23 @@ export function App() {
             if (!entry) return;
             dispatch({ type: "tool_end", id: entry[1], name, result: preview, error: false });
           },
+          onRetry: ({ attempt, maxRetries, delayMs, reason }) => {
+            dispatch({
+              type: "set_status_message",
+              message: `Retry ${attempt}/${maxRetries} in ${(delayMs / 1000).toFixed(1)}s — ${reason}`,
+            });
+          },
           onDone: () => {},
           onError: (err) => dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` }),
         });
       } catch (err) {
         dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
       } finally {
+        setAbortController(null);
         dispatch({ type: "commit_turn" });
       }
     },
-    [config, exit]
+    [config, exit, abortController]
   );
 
   const handlePromptResolve = useCallback(
@@ -332,6 +406,7 @@ export function App() {
           pending: state.pending,
           focusedToolId,
           maxRows: chatMaxRows,
+          scrollOffset: state.scrollOffset,
         })
       ),
       showSidebar
@@ -369,6 +444,12 @@ export function App() {
           })
       : h(InputBox, { disabled: state.status !== "idle", onSubmit: handleSubmit }),
 
-    h(Footer, { status: state.status, message: state.statusMessage })
+    h(Footer, {
+      status: state.status,
+      message: state.statusMessage,
+      elapsedMs,
+      scrollOffset: state.scrollOffset,
+      canCancel: !!abortController,
+    })
   );
 }
