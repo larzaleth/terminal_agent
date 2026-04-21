@@ -49,6 +49,7 @@ Node.js CLI application (not a web app) with a rich Terminal UI powered by `ink`
   tool focus with arrows/space, Esc-to-cancel, alternate screen buffer.
 
 ## Implemented this fork session (2026-02)
+### Round 1 — Bug fixes
 - **P0 fix — TUI freeze on long turns**: coalesced streaming tokens into a
   ref-backed buffer flushed every ~60ms in `src/ui/App.js` so React no longer
   re-renders on every Gemini token. Final flush on turn end / error.
@@ -61,16 +62,29 @@ Node.js CLI application (not a web app) with a rich Terminal UI powered by `ink`
   as plain text). Fenced code blocks get a gray-bordered box.
 - **UX polish**: `ToolCallBlock` renders `liveOutput` while a tool is running
   so the user sees progress; falls back to `(running…)` placeholder.
-- **Tests**: added `tests/ui/markdown.test.js` with 6 new assertions covering
-  inline formatting, headings, bullets, code fences, assistant message
-  markdown, and live tool output. All **51 tests pass**, lint clean.
+
+### Round 2 — Features
+- **Mouse support** (`src/ui/mouse.js`): SGR 1006 wheel events are intercepted
+  before ink sees them, translated into scroll actions via a callback emitter.
+  Enabled/disabled inside `src/ui/run.js` around the TUI lifecycle. Safe no-op
+  when stdout is not a TTY.
+- **Reducer refactor**: `initialState` + `reducer` extracted from `App.js`
+  into `src/ui/reducer.js`. App.js dropped from 521 → ~385 lines and the
+  reducer is now unit-testable in isolation (`tests/reducer.test.js` covers
+  11 reducer actions incl. turn-history cap, stream chunk trim, scroll clamp).
+- **`/stats` + per-turn sparkline**: each turn now captures token/cost/duration
+  deltas, pushed into `state.turnHistory` (rolling last 20). New
+  `src/ui/sparkline.js` renders an ASCII bar chart in the sidebar. `/stats`
+  slash command toggles between compact ("5 turn(s)") and expanded view with
+  Last/Avg breakdown for tokens, cost, and time.
+
+All of the above shipped with tests: **77 tests total**, lint clean.
 
 ## Backlog (prioritized)
 - **P2**: Tab autocomplete for slash commands inside `InputBox.js`.
 - **P3**: Theme system (light / dark / high-contrast) via env or `/theme`.
-- **P3**: Mouse support through Ink's `mouse: true` option.
-- **Refactor**: `App.js` reducer is growing — split action types into a
-  separate module once more UI state is added.
+- **P3**: Mouse click-to-focus tool blocks (wheel already wired).
+- **Refactor**: Split `commands/slash.js` per-command once it grows past ~250 lines.
 
 ## Testing
 - `yarn test` — node native test runner + `ink-testing-library` (51 tests)

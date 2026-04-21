@@ -72,6 +72,71 @@ test("Sidebar: displays session info", () => {
   r.unmount();
 });
 
+test("Sidebar: shows per-turn placeholder when no history", () => {
+  const r = render(
+    h(Sidebar, {
+      provider: "gemini",
+      model: "gemini-2.5-flash",
+      status: "idle",
+      cost: 0,
+      tokens: 0,
+      cacheHitRate: 0,
+      turnHistory: [],
+    })
+  );
+  const out = stripAnsi(r.lastFrame());
+  assert.ok(out.includes("Per-turn stats"));
+  assert.ok(out.includes("no turns yet"));
+  r.unmount();
+});
+
+test("Sidebar: renders sparkline and summary when turnHistory present", () => {
+  const r = render(
+    h(Sidebar, {
+      provider: "gemini",
+      model: "gemini-2.5-flash",
+      status: "idle",
+      cost: 0,
+      tokens: 0,
+      cacheHitRate: 0,
+      turnHistory: [
+        { tokens: 100, cost: 0.001, durationMs: 2000, ts: 1 },
+        { tokens: 250, cost: 0.003, durationMs: 5000, ts: 2 },
+      ],
+      statsExpanded: false,
+    })
+  );
+  const out = stripAnsi(r.lastFrame());
+  assert.ok(out.includes("Per-turn stats"));
+  assert.ok(out.includes("tok"));
+  assert.ok(out.includes("cost"));
+  assert.ok(out.includes("2 turn(s)"));
+  r.unmount();
+});
+
+test("Sidebar: expanded stats view shows avg + last breakdown", () => {
+  const r = render(
+    h(Sidebar, {
+      provider: "gemini",
+      model: "gemini-2.5-flash",
+      status: "idle",
+      cost: 0,
+      tokens: 0,
+      cacheHitRate: 0,
+      turnHistory: [
+        { tokens: 100, cost: 0.001, durationMs: 2000, ts: 1 },
+        { tokens: 500, cost: 0.005, durationMs: 4000, ts: 2 },
+      ],
+      statsExpanded: true,
+    })
+  );
+  const out = stripAnsi(r.lastFrame());
+  assert.ok(out.includes("Last tok"));
+  assert.ok(out.includes("Avg tok"));
+  assert.ok(out.includes("Turns"));
+  r.unmount();
+});
+
 test("ToolCallBlock: collapsed shows only summary", () => {
   const r = render(
     h(ToolCallBlock, {

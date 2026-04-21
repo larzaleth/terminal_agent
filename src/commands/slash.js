@@ -26,6 +26,7 @@ export async function handleSlashCommand(input) {
   ${chalk.white("/model [id]")}           Show or change the active model (session only)
   ${chalk.white("/provider [name]")}      Show or switch LLM provider (gemini/openai/anthropic)
   ${chalk.white("/save [file]")}          Export session transcript to markdown
+  ${chalk.white("/stats")}                Toggle per-turn token/cost chart in sidebar (TUI only)
   ${chalk.white("/mcp")}                  List connected MCP servers and their tools
   ${chalk.white("exit / quit")}           Exit the agent
 `));
