@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "node ./bin/cli.js",
-    "test": "node --test --test-concurrency=1 tests/",
+    "test": "node --test --test-concurrency=1 tests/*.test.js tests/ui/*.test.js",
     "lint": "eslint ./src ./bin",
     "lint:fix": "eslint ./src ./bin --fix",
     "format": "prettier --write ./src ./bin",

@@ -93,6 +93,10 @@ export function loadConfig() {
     _cachedConfig.plannerModel = process.env.MYAGENT_PLANNER_MODEL;
   if (process.env.MYAGENT_SUMMARY_MODEL)
     _cachedConfig.summaryModel = process.env.MYAGENT_SUMMARY_MODEL;
+  if (process.env.MYAGENT_EMBEDDING_PROVIDER)
+    _cachedConfig.embeddingProvider = process.env.MYAGENT_EMBEDDING_PROVIDER;
+  if (process.env.MYAGENT_EMBEDDING_MODEL)
+    _cachedConfig.embeddingModel = process.env.MYAGENT_EMBEDDING_MODEL;
 
   return _cachedConfig;
 }

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { CACHE_DIR, CACHE_TTL_MS, CACHE_MAX_ENTRIES } from "../config/constants.js";
+import { writeFileAtomicSync } from "../utils/utils.js";
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) {
@@ -58,7 +59,7 @@ export function setCache(key, data) {
   try {
     ensureCacheDir();
     const cachePath = path.join(CACHE_DIR, `${key}.json`);
-    fs.writeFileSync(cachePath, JSON.stringify({ timestamp: Date.now(), data }));
+    writeFileAtomicSync(cachePath, JSON.stringify({ timestamp: Date.now(), data }));
     evictIfNeeded();
   } catch (err) {
     console.warn(`⚠️ Cache write failed: ${err.message}`);

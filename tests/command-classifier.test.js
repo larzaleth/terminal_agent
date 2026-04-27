@@ -42,6 +42,16 @@ test("confirm: npm install", () => {
   assert.equal(verdict, "confirm");
 });
 
+test("confirm: node inline script", () => {
+  const { verdict } = classifyCommand('node -e "console.log(1)"');
+  assert.equal(verdict, "confirm");
+});
+
+test("confirm: python inline script", () => {
+  const { verdict } = classifyCommand('python -c "print(1)"');
+  assert.equal(verdict, "confirm");
+});
+
 test("confirm: git push", () => {
   const { verdict } = classifyCommand("git push origin main");
   assert.equal(verdict, "confirm");

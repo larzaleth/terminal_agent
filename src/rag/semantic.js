@@ -2,12 +2,13 @@ import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
 import pLimit from "p-limit";
-import { ai } from "../llm/llm.js";
-import { getCachedResponse, setCachedResponse } from "./cache.js";
+import { loadConfig } from "../config/config.js";
+import { normalizeProviderName } from "../config/provider-env.js";
 import { globalTracker } from "../llm/cost-tracker.js";
+import { getProvider, inferProvider, ProviderError } from "../llm/providers/index.js";
+import { getCachedResponse, setCachedResponse } from "./cache.js";
 import {
   INDEX_FILE,
-  EMBEDDING_MODEL,
   EMBEDDING_BATCH_SIZE,
   EMBEDDING_CONCURRENCY,
   CHUNK_MAX_LINES,
@@ -18,21 +19,98 @@ import {
   IGNORE_DIRS,
   CODE_EXTS,
 } from "../config/constants.js";
+import { writeFileAtomic } from "../utils/utils.js";
+
+const DEFAULT_EMBEDDING_MODELS = {
+  gemini: "text-embedding-004",
+  openai: "text-embedding-3-small",
+};
+
+export function resolveEmbeddingSpec(config = loadConfig(), env = process.env) {
+  const explicitProvider = config.embeddingProvider
+    ? normalizeProviderName(config.embeddingProvider)
+    : null;
+  const modelProvider = config.embeddingModel
+    ? normalizeProviderName(inferProvider(config.embeddingModel))
+    : null;
+
+  if (
+    explicitProvider &&
+    modelProvider &&
+    explicitProvider !== modelProvider
+  ) {
+    throw new ProviderError(
+      `embeddingModel '${config.embeddingModel}' is incompatible with embeddingProvider '${explicitProvider}'.`,
+      { provider: explicitProvider }
+    );
+  }
+
+  const requestedProvider =
+    explicitProvider ||
+    modelProvider ||
+    normalizeProviderName(config.provider || "gemini");
+
+  if (requestedProvider === "anthropic") {
+    if (explicitProvider === "anthropic" || modelProvider === "anthropic") {
+      throw new ProviderError(
+        "Anthropic has no embedding API. Set embeddingProvider to 'gemini' or 'openai'.",
+        { provider: "anthropic" }
+      );
+    }
+
+    const fallbackProvider = env.GEMINI_API_KEY
+      ? "gemini"
+      : env.OPENAI_API_KEY
+        ? "openai"
+        : null;
+
+    if (!fallbackProvider) {
+      throw new ProviderError(
+        "Anthropic has no embedding API and no Gemini/OpenAI fallback is configured. Add GEMINI_API_KEY or OPENAI_API_KEY, or set embeddingProvider in agent.config.json.",
+        { provider: "anthropic" }
+      );
+    }
+
+    return {
+      provider: fallbackProvider,
+      model:
+        modelProvider === fallbackProvider && config.embeddingModel
+          ? config.embeddingModel
+          : DEFAULT_EMBEDDING_MODELS[fallbackProvider],
+      fallbackFrom: "anthropic",
+    };
+  }
+
+  if (!DEFAULT_EMBEDDING_MODELS[requestedProvider]) {
+    throw new ProviderError(
+      `Unknown embedding provider: '${requestedProvider}'. Valid: gemini, openai.`,
+      { provider: requestedProvider }
+    );
+  }
+
+  return {
+    provider: requestedProvider,
+    model: config.embeddingModel || DEFAULT_EMBEDDING_MODELS[requestedProvider],
+    fallbackFrom: null,
+  };
+}
 
 // ===========================
 // 🔹 EMBEDDING (with cache + cost tracking)
 // ===========================
 export async function embed(text) {
-  const cached = getCachedResponse(text, EMBEDDING_MODEL);
+  const spec = resolveEmbeddingSpec();
+  const cacheKey = `${spec.provider}:${spec.model}`;
+  const cached = getCachedResponse(text, cacheKey);
   if (cached) {
-    globalTracker.trackEmbedding(text, true);
+    globalTracker.trackEmbedding(text, true, spec.model);
     return cached;
   }
 
-  const res = await ai.models.embedContent({ model: EMBEDDING_MODEL, contents: text });
-  const embedding = res.embedding.values;
-  setCachedResponse(text, EMBEDDING_MODEL, embedding);
-  globalTracker.trackEmbedding(text, false);
+  const provider = getProvider(spec.provider);
+  const embedding = await provider.embed(text, spec.model);
+  setCachedResponse(text, cacheKey, embedding);
+  globalTracker.trackEmbedding(text, false, spec.model);
   return embedding;
 }
 
@@ -166,7 +244,7 @@ export async function buildIndex(folderPath) {
     }
   }
 
-  await fs.writeFile(INDEX_FILE, JSON.stringify(index));
+  await writeFileAtomic(INDEX_FILE, JSON.stringify(index));
 
   // Refresh in-memory cache so subsequent loadIndex() calls skip the disk read.
   const stat = await fs.stat(INDEX_FILE);

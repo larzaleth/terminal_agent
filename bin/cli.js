@@ -3,8 +3,9 @@ import readline from "readline/promises";
 import fs from "fs";
 import chalk from "chalk";
 import ora from "ora";
-import { formatDuration } from "../src/utils/utils.js";
+import { formatDuration, writeFileAtomicSync } from "../src/utils/utils.js";
 import { getGlobalEnvPath, loadConfig } from "../src/config/config.js";
+import { getProviderApiKeySpec, upsertEnvValue } from "../src/config/provider-env.js";
 import { handleSlashCommand } from "../src/commands/slash.js";
 import { runAgent } from "../src/core/agents.js";
 import { globalTracker } from "../src/llm/cost-tracker.js";
@@ -13,32 +14,43 @@ import { shutdownMcp } from "../src/mcp/client.js";
 // ===========================
 // 🔑 API KEY SETUP
 // ===========================
-async function setupApiKey(rl) {
+async function setupApiKey(rl, provider = loadConfig().provider) {
   const globalEnvPath = getGlobalEnvPath();
-  if (process.env.GEMINI_API_KEY) return;
+  const spec = getProviderApiKeySpec(provider);
+  if (process.env[spec.envVar]) return;
 
   console.log(chalk.cyan.bold("\n👋 Welcome to AI Coding Agent!\n"));
-  console.log(chalk.dim("Looks like you haven't set up your Gemini API Key yet.\n"));
+  console.log(chalk.dim(`Looks like you haven't set up your ${spec.label} API Key yet.\n`));
 
-  const key = await rl.question(chalk.yellow("🔑 Enter Gemini API Key (get it at https://aistudio.google.com): "));
+  const key = await rl.question(
+    chalk.yellow(`🔑 Enter ${spec.label} API Key (get it at ${spec.setupUrl}): `)
+  );
   if (!key.trim()) {
     console.error(chalk.red("❌ API Key cannot be empty!"));
     process.exit(1);
   }
 
-  fs.writeFileSync(globalEnvPath, `GEMINI_API_KEY=${key.trim()}\n`, { mode: 0o600 });
-  console.log(chalk.green(`\n✅ API Key saved to ${globalEnvPath}\n`));
-  process.env.GEMINI_API_KEY = key.trim();
+  const existing = fs.existsSync(globalEnvPath) ? fs.readFileSync(globalEnvPath, "utf-8") : "";
+  writeFileAtomicSync(globalEnvPath, upsertEnvValue(existing, spec.envVar, key.trim()));
+  try {
+    fs.chmodSync(globalEnvPath, 0o600);
+  } catch {
+    /* best-effort on Windows */
+  }
+  console.log(chalk.green(`\n✅ ${spec.label} API Key saved to ${globalEnvPath}\n`));
+  process.env[spec.envVar] = key.trim();
 }
 
 // ===========================
 // 🎨 BANNER (readline mode only)
 // ===========================
 function showBanner() {
+  const config = loadConfig();
+  const provider = getProviderApiKeySpec(config.provider).label;
   console.log(chalk.cyan.bold(`
 ╔══════════════════════════════════════╗
 ║     🤖 AI Coding Agent v2.4        ║
-║     Powered by Gemini               ║
+║     Powered by ${provider.padEnd(18)}║
 ╚══════════════════════════════════════╝`));
   console.log(chalk.dim("  Type your request, or use commands:"));
   console.log(chalk.dim("  /help  /clear  /index <folder>  /config  exit\n"));
@@ -60,7 +72,7 @@ async function runTui() {
 // ===========================
 async function runReadline() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  await setupApiKey(rl);
+  await setupApiKey(rl, loadConfig().provider);
   showBanner();
 
   process.on("SIGINT", async () => {
@@ -128,6 +140,8 @@ async function runReadline() {
 // 🚀 ENTRY — Hybrid TUI / Readline
 // ===========================
 async function main() {
+  const config = loadConfig();
+  const { envVar } = getProviderApiKeySpec(config.provider);
   const forceTui = process.argv.includes("--tui");
   const forceReadline =
     process.argv.includes("--no-tui") ||
@@ -135,9 +149,9 @@ async function main() {
   const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
   // Need a key before anything else — use a tiny readline just for that.
-  if (!process.env.GEMINI_API_KEY) {
+  if (!process.env[envVar]) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    await setupApiKey(rl);
+    await setupApiKey(rl, config.provider);
     rl.close();
   }
 

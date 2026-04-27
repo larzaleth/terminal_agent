@@ -1,6 +1,7 @@
 import fs from "fs";
 import chalk from "chalk";
 import { COST_REPORT_FILE } from "../config/constants.js";
+import { writeFileAtomicSync } from "../utils/utils.js";
 
 // ===========================
 // 🔹 PRICING (per 1K tokens, USD)
@@ -59,7 +60,7 @@ export class CostTracker {
   reset() {
     this.usage = {
       generation: { inputTokens: 0, outputTokens: 0, calls: 0 },
-      embeddings: { tokens: 0, calls: 0 },
+      embeddings: { tokens: 0, calls: 0, byModel: {} },
       cacheHits: 0,
       cacheMisses: 0,
     };
@@ -99,7 +100,7 @@ export class CostTracker {
     return { inputTokens, outputTokens };
   }
 
-  trackEmbedding(text, fromCache = false) {
+  trackEmbedding(text, fromCache = false, model = "text-embedding-004") {
     if (fromCache) {
       this.usage.cacheHits += 1;
       return 0;
@@ -108,6 +109,11 @@ export class CostTracker {
     const tokens = estimateTokens(text);
     this.usage.embeddings.tokens += tokens;
     this.usage.embeddings.calls += 1;
+    if (!this.usage.embeddings.byModel[model]) {
+      this.usage.embeddings.byModel[model] = { tokens: 0, calls: 0 };
+    }
+    this.usage.embeddings.byModel[model].tokens += tokens;
+    this.usage.embeddings.byModel[model].calls += 1;
     return tokens;
   }
 
@@ -117,8 +123,11 @@ export class CostTracker {
       (this.usage.generation.inputTokens / 1000) * pricing.input +
       (this.usage.generation.outputTokens / 1000) * (pricing.output ?? pricing.input);
 
-    const embeddingPricing = pricingFor("text-embedding-004");
-    const embeddingCost = (this.usage.embeddings.tokens / 1000) * embeddingPricing.input;
+    const byModel = this.usage.embeddings.byModel || {};
+    const embeddingCost = Object.entries(byModel).reduce((sum, [embeddingModel, usage]) => {
+      const embeddingPricing = pricingFor(embeddingModel);
+      return sum + ((usage.tokens || 0) / 1000) * embeddingPricing.input;
+    }, 0);
 
     return {
       generation: generationCost,
@@ -179,7 +188,7 @@ export class CostTracker {
       }
       history.push(report);
       if (history.length > 100) history = history.slice(-100);
-      fs.writeFileSync(filename, JSON.stringify(history, null, 2));
+      writeFileAtomicSync(filename, JSON.stringify(history, null, 2));
     } catch (err) {
       console.error(chalk.red(`❌ Failed to save cost report: ${err.message}`));
     }

@@ -2,6 +2,7 @@ import fs from "fs";
 import { getProvider } from "../llm/providers/index.js";
 import { loadConfig } from "../config/config.js";
 import { MEMORY_FILE } from "../config/constants.js";
+import { writeFileAtomicSync } from "../utils/utils.js";
 
 // ===========================
 // 🔹 LOAD (with auto-migration from legacy Gemini {role, parts} format)
@@ -59,14 +60,14 @@ export async function saveMemory(memory) {
   if (memory.length > maxTurns) {
     memory = await summarizeMemory(memory);
   }
-  fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
+  writeFileAtomicSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
 }
 
 // ===========================
 // 🔹 CLEAR
 // ===========================
 export function clearMemory() {
-  fs.writeFileSync(MEMORY_FILE, "[]");
+  writeFileAtomicSync(MEMORY_FILE, "[]");
 }
 
 // ===========================

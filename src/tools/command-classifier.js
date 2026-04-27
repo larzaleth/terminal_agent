@@ -26,10 +26,12 @@ const AUTO_ALLOWED = new Set([
   "ls", "pwd", "whoami", "which", "type", "echo", "cat", "head", "tail",
   "wc", "file", "stat", "date", "uname", "env", "printenv",
   "tree", "find", "du", "df",
-  "git", "npm", "yarn", "pnpm", "node", "python", "python3", "pip", "pip3",
+  "git", "npm", "yarn", "pnpm", "pip", "pip3",
   "jest", "vitest", "pytest", "tsc", "eslint", "prettier", "ruff",
   "rg", "grep", "fgrep", "egrep", "diff", "sort", "uniq",
 ]);
+
+const FORCE_CONFIRM_COMMANDS = new Set(["node", "python", "python3"]);
 
 // Sub-commands that turn an AUTO command into a write operation → force confirm.
 const UNSAFE_SUBCMDS = {
@@ -58,6 +60,10 @@ export function classifyCommand(cmd) {
   const tokens = cmd.trim().split(/\s+/);
   const first = tokens[0];
   const second = tokens[1];
+
+  if (FORCE_CONFIRM_COMMANDS.has(first)) {
+    return { verdict: "confirm", reason: `${first} can execute arbitrary code` };
+  }
 
   if (!AUTO_ALLOWED.has(first)) {
     return { verdict: "confirm", reason: "Not in auto-allow list" };

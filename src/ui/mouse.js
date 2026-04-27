@@ -90,9 +90,9 @@ export function enableMouse(stdin = process.stdin, stdout = process.stdout) {
   // NOT via `.on('data', ...)`. So to strip mouse bytes before ink sees
   // them we must patch BOTH `.read()` (ink's path) and `.emit('data', ...)`
   // (fallback for any other listeners, e.g. readline helpers).
-  originalRead = stdin.read.bind(stdin);
+  originalRead = stdin.read;
   stdin.read = (size) => {
-    const chunk = originalRead(size);
+    const chunk = originalRead.call(stdin, size);
     if (chunk === null || chunk === undefined) return chunk;
     const asString = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
     if (!asString.includes("\x1b[<")) return chunk;
@@ -102,7 +102,7 @@ export function enableMouse(stdin = process.stdin, stdout = process.stdout) {
     return Buffer.isBuffer(chunk) ? Buffer.from(stripped, "utf8") : stripped;
   };
 
-  originalEmit = stdin.emit.bind(stdin);
+  originalEmit = stdin.emit;
   stdin.emit = (event, chunk, ...rest) => {
     if (event === "data") {
       const asString = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
@@ -110,7 +110,8 @@ export function enableMouse(stdin = process.stdin, stdout = process.stdout) {
         const stripped = stripMouseSequences(asString);
         if (stripped === "") return true;
         if (stripped !== asString) {
-          return originalEmit(
+          return originalEmit.call(
+            stdin,
             "data",
             Buffer.isBuffer(chunk) ? Buffer.from(stripped, "utf8") : stripped,
             ...rest
@@ -118,7 +119,7 @@ export function enableMouse(stdin = process.stdin, stdout = process.stdout) {
         }
       }
     }
-    return originalEmit(event, chunk, ...rest);
+    return originalEmit.call(stdin, event, chunk, ...rest);
   };
 
   installed = true;

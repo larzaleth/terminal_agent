@@ -2,7 +2,14 @@ import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import { truncate, isSafePath } from "../utils/utils.js";
+import { createInterface } from "readline";
+import {
+  truncate,
+  isSafePath,
+  resolveCommandShell,
+  resolveTerminationPlan,
+  appendBoundedBuffer,
+} from "../utils/utils.js";
 import { classifyCommand } from "./command-classifier.js";
 import { diffStats } from "./diff.js";
 import { getPrompter } from "../ui/prompter.js";
@@ -13,6 +20,7 @@ import {
   MAX_TOOL_OUTPUT_CHARS,
   MAX_COMMAND_OUTPUT_CHARS,
   COMMAND_TIMEOUT_MS,
+  COMMAND_MAX_BUFFER,
   DIFF_AUTO_APPROVE_ENV,
 } from "../config/constants.js";
 
@@ -24,31 +32,31 @@ async function confirmExecution(cmd, reason) {
   return getPrompter().confirm({ message: `Agent wants to run${tag}: \`${cmd}\``, reason });
 }
 
-// Async recursive walker. Won't block the event loop on large repos.
-async function walkFiles(dir, include) {
-  const results = [];
+const GREP_MAX_MATCHES = 50;
+const FILE_PREVIEW_NOTICE = "\n... (truncated, file preview only)";
+
+// Async recursive walker. Yields files lazily so searches can stop early.
+async function* walkFiles(dir, include) {
   let entries;
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
-    return results;
+    return;
   }
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
-        const sub = await walkFiles(fullPath, include);
-        results.push(...sub);
+        yield* walkFiles(fullPath, include);
       }
     } else {
       const ext = path.extname(entry.name).toLowerCase();
       if (BINARY_EXTS.has(ext)) continue;
-      if (include && !entry.name.endsWith(include.replace("*", ""))) continue;
-      results.push(fullPath);
+      if (include && !matchesIncludePattern(entry.name, include)) continue;
+      yield fullPath;
     }
   }
-  return results;
 }
 
 const UNSAFE_PATH_MSG =
@@ -61,6 +69,155 @@ async function exists(p) {
   } catch {
     return false;
   }
+}
+
+function matchesIncludePattern(fileName, include) {
+  if (!include) return true;
+  const escaped = include.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`, "i").test(fileName);
+}
+
+async function readFilePreview(filePath, maxChars = MAX_TOOL_OUTPUT_CHARS) {
+  const previewLimit = Math.max(256, maxChars - FILE_PREVIEW_NOTICE.length);
+  const lines = [];
+  let currentLength = 0;
+  let lineNumber = 0;
+  let truncated = false;
+
+  const stream = fsSync.createReadStream(filePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of reader) {
+      lineNumber++;
+      const numberedLine = `${lineNumber}: ${line}`;
+      const additionLength = numberedLine.length + (lines.length > 0 ? 1 : 0);
+
+      if (currentLength + additionLength > previewLimit) {
+        truncated = true;
+        if (lines.length === 0 && previewLimit > 0) {
+          lines.push(numberedLine.slice(0, previewLimit));
+        }
+        break;
+      }
+
+      lines.push(numberedLine);
+      currentLength += additionLength;
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  const output = lines.join("\n");
+  return truncated ? `${output}${FILE_PREVIEW_NOTICE}` : output;
+}
+
+function createSearchMatcher(pattern, isRegex) {
+  if (!isRegex) {
+    const needle = pattern.toLowerCase();
+    return (line) => line.toLowerCase().includes(needle);
+  }
+
+  const regex = new RegExp(pattern, "i");
+  return (line) => regex.test(line);
+}
+
+async function collectMatchesFromFile(filePath, matcher, matches, maxMatches) {
+  const stream = fsSync.createReadStream(filePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  let lineNumber = 0;
+
+  try {
+    for await (const line of reader) {
+      lineNumber++;
+      if (!matcher(line)) continue;
+      matches.push(`${filePath}:${lineNumber}: ${line.trim()}`);
+      if (matches.length >= maxMatches) return true;
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  return false;
+}
+
+async function fallbackGrepSearch({ pattern, dir, include, isRegex, maxMatches = GREP_MAX_MATCHES }) {
+  const matcher = createSearchMatcher(pattern, isRegex);
+  const matches = [];
+  let filesScanned = 0;
+  let sawFiles = false;
+
+  for await (const file of walkFiles(dir, include)) {
+    sawFiles = true;
+    filesScanned++;
+    try {
+      const reachedLimit = await collectMatchesFromFile(file, matcher, matches, maxMatches);
+      if (reachedLimit) break;
+    } catch {
+      /* skip unreadable files */
+    }
+  }
+
+  return {
+    matches,
+    filesScanned,
+    sawFiles,
+    limited: matches.length >= maxMatches,
+  };
+}
+
+async function ripgrepSearch({ pattern, dir, include, isRegex, maxMatches = GREP_MAX_MATCHES }) {
+  return new Promise((resolve) => {
+    const args = ["--line-number", "--color", "never", "--max-count", String(maxMatches)];
+    if (!isRegex) args.push("--fixed-strings");
+    if (include) args.push("--glob", include);
+    args.push("--", pattern, dir);
+
+    const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const matches = [];
+    let stderr = "";
+    let remainder = "";
+    let abortedAfterLimit = false;
+
+    const pushLines = (text) => {
+      remainder += text;
+      const lines = remainder.split(/\r?\n/);
+      remainder = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line) continue;
+        if (matches.length < maxMatches) {
+          matches.push(line);
+          continue;
+        }
+        abortedAfterLimit = true;
+        child.kill();
+        break;
+      }
+    };
+
+    child.stdout.on("data", (chunk) => {
+      pushLines(chunk.toString());
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr = appendBoundedBuffer(stderr, chunk.toString(), 4096);
+    });
+
+    child.on("error", () => {
+      resolve(null);
+    });
+
+    child.on("close", (code) => {
+      if (remainder && matches.length < maxMatches) matches.push(remainder);
+      if (abortedAfterLimit) return resolve({ matches, limited: true });
+      if (code === 0) return resolve({ matches, limited: false });
+      if (code === 1) return resolve({ matches: [], limited: false });
+      resolve({ error: stderr.trim() || `ripgrep exited with code ${code}` });
+    });
+  });
 }
 
 // ===========================
@@ -81,12 +238,7 @@ export const tools = {
         return `❌ Error: '${filePath}' is a directory, not a file.\n💡 Tip: Use list_dir to view directory contents.`;
       }
 
-      const content = await fs.readFile(filePath, "utf-8");
-      const numbered = content
-        .split("\n")
-        .map((line, i) => `${i + 1}: ${line}`)
-        .join("\n");
-      return truncate(numbered, MAX_TOOL_OUTPUT_CHARS);
+      return await readFilePreview(filePath);
     } catch (err) {
       if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
       if (err.code === "EISDIR") return `❌ Error: '${filePath}' is a directory.`;
@@ -190,37 +342,39 @@ export const tools = {
       if (!pattern) return "❌ Error: Search pattern cannot be empty.";
       if (!(await exists(dir))) return `❌ Error: Directory '${dir}' not found.`;
 
-      const files = await walkFiles(dir, include);
-      if (files.length === 0) {
+      const rgResult = await ripgrepSearch({ pattern, dir, include, isRegex, maxMatches: GREP_MAX_MATCHES });
+      if (rgResult?.error) {
+        return `❌ Error during search: ${rgResult.error}`;
+      }
+      if (rgResult) {
+        if (rgResult.matches.length === 0) {
+          return `❌ No matches found for '${pattern}'${include ? ` in files matching '${include}'` : ""}.`;
+        }
+
+        let result = `✅ Found ${rgResult.matches.length} matches:\n\n${rgResult.matches.join("\n")}`;
+        if (rgResult.limited) {
+          result += `\n\n⚠️ Showing first ${GREP_MAX_MATCHES} matches. Use 'include' to narrow your search.`;
+        }
+        return result;
+      }
+
+      const fallbackResult = await fallbackGrepSearch({
+        pattern,
+        dir,
+        include,
+        isRegex,
+        maxMatches: GREP_MAX_MATCHES,
+      });
+      if (!fallbackResult.sawFiles) {
         return `❌ No files found in '${dir}'${include ? ` matching '${include}'` : ""}.`;
       }
-
-      const matches = [];
-      const MAX_MATCHES = 50;
-      const regex = isRegex ? new RegExp(pattern, "gi") : null;
-
-      for (const file of files) {
-        if (matches.length >= MAX_MATCHES) break;
-        try {
-          const content = await fs.readFile(file, "utf-8");
-          const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            if (matches.length >= MAX_MATCHES) break;
-            const line = lines[i];
-            const found = regex ? regex.test(line) : line.toLowerCase().includes(pattern.toLowerCase());
-            if (regex) regex.lastIndex = 0;
-            if (found) matches.push(`${file}:${i + 1}: ${line.trim()}`);
-          }
-        } catch {
-          /* skip unreadable files */
-        }
+      if (fallbackResult.matches.length === 0) {
+        return `❌ No matches found for '${pattern}' in ${fallbackResult.filesScanned} files.`;
       }
 
-      if (matches.length === 0) return `❌ No matches found for '${pattern}' in ${files.length} files.`;
-
-      let result = `✅ Found ${matches.length} matches:\n\n` + matches.join("\n");
-      if (matches.length >= MAX_MATCHES) {
-        result += `\n\n⚠️ Showing first ${MAX_MATCHES} matches. Use 'include' to narrow your search.`;
+      let result = `✅ Found ${fallbackResult.matches.length} matches:\n\n${fallbackResult.matches.join("\n")}`;
+      if (fallbackResult.limited) {
+        result += `\n\n⚠️ Showing first ${GREP_MAX_MATCHES} matches. Use 'include' to narrow your search.`;
       }
       return result;
     } catch (err) {
@@ -320,34 +474,35 @@ export const tools = {
 function runWithSpawn(cmd) {
   return new Promise((resolve) => {
     console.log(`\n🚀 [run_command] ${cmd}`);
-    const shell = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "/bin/sh";
-    const shellArg = process.platform === "win32" ? "/c" : "-c";
+    const shellSpec = resolveCommandShell();
 
-    const child = spawn(shell, [shellArg, cmd], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(shellSpec.shell, [...shellSpec.args, cmd], { stdio: ["ignore", "pipe", "pipe"] });
 
     let stdoutBuf = "";
     let stderrBuf = "";
+    let stdoutDropped = 0;
+    let stderrDropped = 0;
     let timedOut = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* already dead */
-      }
+      void terminateChildProcess(child);
     }, COMMAND_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
-      stdoutBuf += text;
+      const next = appendBoundedBuffer(stdoutBuf, text, COMMAND_MAX_BUFFER);
+      stdoutDropped += stdoutBuf.length + text.length - next.length;
+      stdoutBuf = next;
       if (hasToolStreamCallback()) emitToolStream("run_command", text);
       else process.stdout.write(text);
     });
 
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
-      stderrBuf += text;
+      const next = appendBoundedBuffer(stderrBuf, text, COMMAND_MAX_BUFFER);
+      stderrDropped += stderrBuf.length + text.length - next.length;
+      stderrBuf = next;
       if (hasToolStreamCallback()) emitToolStream("run_command", text);
       else process.stderr.write(text);
     });
@@ -363,20 +518,64 @@ function runWithSpawn(cmd) {
         return resolve(`❌ Error: Command timed out after ${COMMAND_TIMEOUT_MS / 1000}s and was killed.`);
       }
       if (code === 0) {
-        const out = stdoutBuf.trim() === "" ? "(no output)" : truncate(stdoutBuf, MAX_COMMAND_OUTPUT_CHARS);
+        const stdoutOut =
+          stdoutDropped > 0
+            ? `[showing last ${stdoutBuf.length} chars, ${stdoutDropped} earlier chars omitted]\n${stdoutBuf}`
+            : stdoutBuf;
+        const out = stdoutBuf.trim() === "" ? "(no output)" : truncate(stdoutOut, MAX_COMMAND_OUTPUT_CHARS);
         return resolve(`✅ Success (exit 0):\n${out}`);
       }
       let errorMsg = `❌ Error: Command failed (exit code: ${code})\n\n`;
       if (stderrBuf) errorMsg += `📛 Stderr:\n${truncate(stderrBuf, 2000)}\n\n`;
       if (stdoutBuf) errorMsg += `📄 Stdout:\n${truncate(stdoutBuf, 2000)}`;
       errorMsg += `\n\n💡 Tip: Check command syntax and permissions.`;
+      if (stderrBuf || stdoutBuf) {
+        errorMsg = `❌ Error: Command failed (exit code: ${code})\n\n`;
+        if (stderrBuf) {
+          const stderrOut =
+            stderrDropped > 0
+              ? `[showing last ${stderrBuf.length} chars, ${stderrDropped} earlier chars omitted]\n${stderrBuf}`
+              : stderrBuf;
+          errorMsg += `📝 Stderr:\n${truncate(stderrOut, 2000)}\n\n`;
+        }
+        if (stdoutBuf) {
+          const stdoutOut =
+            stdoutDropped > 0
+              ? `[showing last ${stdoutBuf.length} chars, ${stdoutDropped} earlier chars omitted]\n${stdoutBuf}`
+              : stdoutBuf;
+          errorMsg += `📄 Stdout:\n${truncate(stdoutOut, 2000)}`;
+        }
+        errorMsg += `\n\n💡 Tip: Check command syntax and permissions.`;
+      }
       resolve(errorMsg);
     });
   });
 }
 
+async function terminateChildProcess(child) {
+  const pid = child?.pid;
+  const plan = resolveTerminationPlan(pid);
+  if (!plan) return false;
+
+  if (plan.mode === "signal") {
+    try {
+      child.kill(plan.signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return new Promise((resolve) => {
+    const killer = spawn(plan.command, plan.args, { stdio: "ignore" });
+    killer.on("error", () => resolve(false));
+    killer.on("close", () => resolve(true));
+  });
+}
+
 // Keep a tiny sync escape hatch for callers that genuinely need it (none today).
 export const _syncFs = fsSync;
+export { terminateChildProcess };
 
 // ===========================
 // 🔧 DECLARATIONS (Gemini API)

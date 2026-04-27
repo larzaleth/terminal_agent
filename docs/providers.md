@@ -1,14 +1,14 @@
 # LLM Providers
 
-The agent supports three LLM providers behind a unified interface. All features (streaming, function calling, cost tracking, memory) work identically regardless of provider.
+The agent supports three LLM providers behind a unified interface. Streaming, tool calling, memory, and cost tracking work the same way across providers.
 
 ## Supported Providers
 
 | Provider | Chat | Streaming | Tools | Embeddings | Notes |
 |---|:-:|:-:|:-:|:-:|---|
-| **Gemini** | ✅ | ✅ | ✅ | ✅ `text-embedding-004` | Free tier generous; **default** |
-| **OpenAI** | ✅ | ✅ | ✅ | ✅ `text-embedding-3-small/large` | Use for `gpt-*`, `o1`, `o3` |
-| **Anthropic** | ✅ | ✅ | ✅ | ❌ (no native API) | Use Gemini/OpenAI embeddings for RAG |
+| **Gemini** | Yes | Yes | Yes | Yes `text-embedding-004` | Default setup |
+| **OpenAI** | Yes | Yes | Yes | Yes `text-embedding-3-small/large` | Use for `gpt-*`, `o1`, `o3` |
+| **Anthropic** | Yes | Yes | Yes | No native API | Falls back to Gemini/OpenAI for RAG |
 
 ## Getting API Keys
 
@@ -20,7 +20,7 @@ The agent supports three LLM providers behind a unified interface. All features 
 
 ## Setup
 
-Add your keys to `~/.myagent.env` (or a project-local `.env`):
+Add your keys to `~/.myagent.env` or a project-local `.env`:
 
 ```env
 GEMINI_API_KEY=AIzaSy...
@@ -28,16 +28,18 @@ OPENAI_API_KEY=sk-proj-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Or use custom endpoints (Azure OpenAI, proxies, self-hosted):
+Custom endpoints are also supported:
 
 ```env
 OPENAI_BASE_URL=https://my-azure.openai.azure.com/v1
 ANTHROPIC_BASE_URL=https://my-proxy.example.com
 ```
 
+On first run, the CLI prompts only for the API key required by the currently configured `provider`.
+
 ## Switching Providers
 
-### Persist in `agent.config.json`:
+Persist the choice in `agent.config.json`:
 
 ```json
 {
@@ -48,99 +50,76 @@ ANTHROPIC_BASE_URL=https://my-proxy.example.com
 }
 ```
 
-### Session-only via slash command:
+Or switch for the current session:
 
-```
-🧑 > /model gpt-4o-mini
-✅ Switched to openai:gpt-4o-mini
-
-🧑 > /model claude-3-5-sonnet-latest
-✅ Switched to anthropic:claude-3-5-sonnet-latest
+```text
+> /model gpt-4o-mini
+> /model claude-3-5-sonnet-latest
 ```
 
-See [Slash Commands / `/model`](./commands.md#model-id) for full syntax.
+See [commands.md](./commands.md) for the full slash-command reference.
 
 ## Recommended Models
 
-### Quality (daily coding)
+Quality:
 - Gemini: `gemini-2.5-flash`
 - OpenAI: `gpt-4o-mini`
 - Anthropic: `claude-3-5-haiku-latest`
 
-### Maximum capability (hard tasks)
+Maximum capability:
 - Gemini: `gemini-1.5-pro`
 - OpenAI: `gpt-4o`, `o1`, `o3-mini`
 - Anthropic: `claude-3-5-sonnet-latest`, `claude-3-opus-latest`
 
-### Cost-optimized (simple queries)
+Cost-optimized:
 - Gemini: `gemini-2.0-flash`, `gemini-1.5-flash`
 - OpenAI: `gpt-4o-mini`
 - Anthropic: `claude-3-5-haiku-latest`
 
 ## Mixing Providers
 
-You can use one provider for the main agent and another for the planner/summarizer. However, **the current implementation uses the same provider for all three** (read from `config.provider`). If you need true mixing, edit `src/core/planner.js` and `src/core/memory.js` to call a different provider directly.
-
-Future improvement: per-role provider config. PRs welcome — see [Contributing](./contributing.md).
+The main agent, planner, and summarizer currently all use `config.provider`. If you need a different embedding path, use `embeddingProvider` and `embeddingModel`.
 
 ## Embeddings
 
-The RAG/`/index` system uses embeddings to find relevant code chunks. Current behavior:
+The RAG and `/index` flow uses provider-aware embeddings:
 
-- When using **Gemini** or **OpenAI** as the main provider, embeddings use that provider's embedding model.
-- When using **Anthropic** (no native embedding API), `embed()` calls will fail — fall back by keeping a Gemini/OpenAI key configured, or skip `/index` entirely.
+- With **Gemini** or **OpenAI** as the main provider, embeddings use that provider's default embedding model.
+- With **Anthropic**, embeddings automatically fall back to **Gemini** if `GEMINI_API_KEY` is present, otherwise to **OpenAI** if `OPENAI_API_KEY` is present.
+- You can override the embedding path explicitly with `embeddingProvider` and `embeddingModel`.
 
-Embedding models used:
+Example:
 
-| Provider | Model | Dimensions | Price (per 1M tokens) |
-|---|---|---|---|
-| Gemini | `text-embedding-004` | 768 | $0.01 (essentially free for most) |
-| OpenAI | `text-embedding-3-small` | 1536 | $0.02 |
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-3-5-haiku-latest",
+  "embeddingProvider": "openai",
+  "embeddingModel": "text-embedding-3-large"
+}
+```
+
+Embedding models:
+
+| Provider | Model | Price (per 1M tokens) |
+|---|---|---|
+| Gemini | `text-embedding-004` | $0.01 |
+| OpenAI | `text-embedding-3-small` | $0.02 |
+| OpenAI | `text-embedding-3-large` | $0.13 |
 
 ## Streaming Behavior
 
-All three providers stream tokens in real time. You'll see text appear character-by-character as the model generates. Tool calls are accumulated server-side and emitted as complete events (not streamed mid-argument).
+All three providers stream text tokens in real time. Tool calls are accumulated and emitted as complete events after the provider finishes sending the call payload.
 
-## Function Calling Format Conversion
+## Tool Format Conversion
 
-Internally, the agent uses a normalized tool schema (`{ name, description, parameters: {type:"object", ...} }`). The provider adapters convert this to:
-
-| Provider | Tool format |
-|---|---|
-| Gemini | `{ functionDeclarations: [{ name, description, parameters }] }` |
-| OpenAI | `[{ type: "function", function: { name, description, parameters } }]` |
-| Anthropic | `[{ name, description, input_schema }]` |
-
-Message format conversion is also handled transparently — you can switch providers mid-session and your memory.json continues to work.
-
-## Cost Comparison (Jan 2026 prices)
-
-Approximate cost per 1K generation tokens (input → output):
-
-| Model | Input | Output |
-|---|---|---|
-| gemini-2.5-flash | $0.0000188 | $0.000075 |
-| gpt-4o-mini | $0.00015 | $0.0006 |
-| claude-3-5-haiku | $0.0008 | $0.004 |
-| gpt-4o | $0.0025 | $0.01 |
-| claude-3-5-sonnet | $0.003 | $0.015 |
-| o1 | $0.015 | $0.06 |
-| claude-3-opus | $0.015 | $0.075 |
-
-For a typical 10-turn coding session (~20K input + 5K output tokens), that's roughly:
-- Gemini flash: **$0.001**
-- gpt-4o-mini: **$0.006**
-- claude-haiku: **$0.036**
-- gpt-4o: **$0.100**
-
-See [Cost Tracking](./cost-tracking.md) for how this is measured and reported.
+Internally the agent uses a normalized tool schema. Provider adapters convert it to the native wire format for Gemini, OpenAI, or Anthropic automatically, and the same applies to conversation history.
 
 ## Troubleshooting
 
 | Error | Fix |
 |---|---|
-| `OPENAI_API_KEY missing` | Add to `~/.myagent.env` or `.env` |
-| `ANTHROPIC_API_KEY missing` | Add to `~/.myagent.env` or `.env` |
-| `Anthropic has no embedding API` | Don't `/index` while on Anthropic; switch to Gemini for indexing |
-| `Unknown provider: 'xxx'` | Must be `gemini`, `openai`, or `anthropic` |
-| 429 rate limits | Built-in retry with exponential backoff handles transient 429s. Persistent: lower `TOOL_CONCURRENCY` in `constants.js` |
+| `OPENAI_API_KEY missing` | Add it to `~/.myagent.env` or `.env` |
+| `ANTHROPIC_API_KEY missing` | Add it to `~/.myagent.env` or `.env` |
+| `Anthropic has no embedding API` | Use `embeddingProvider: "gemini"` or `embeddingProvider: "openai"` |
+| `Unknown provider: 'xxx'` | Use `gemini`, `openai`, or `anthropic` |

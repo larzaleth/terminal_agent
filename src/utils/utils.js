@@ -1,5 +1,6 @@
 import os from "os";
 import path from "path";
+import fs from "fs";
 
 // ===========================
 // 🔹 OS & SHELL DETECTION
@@ -10,9 +11,48 @@ export function detectOS() {
   return map[platform] || platform;
 }
 
+export function resolveCommandShell(platform = os.platform(), env = process.env) {
+  if (platform === "win32") {
+    if (env.MYAGENT_WINDOWS_SHELL === "cmd") {
+      return {
+        shell: env.ComSpec || "cmd.exe",
+        args: ["/c"],
+        label: env.ComSpec || "cmd.exe",
+      };
+    }
+
+    const shell = env.MYAGENT_POWERSHELL_PATH || "powershell.exe";
+    return {
+      shell,
+      args: ["-NoLogo", "-NoProfile", "-Command"],
+      label: shell,
+    };
+  }
+
+  return {
+    shell: "/bin/sh",
+    args: ["-c"],
+    label: env.SHELL || "/bin/sh",
+  };
+}
+
 export function detectShell() {
-  if (os.platform() === "win32") return process.env.ComSpec || "cmd.exe";
-  return process.env.SHELL || "/bin/bash";
+  return resolveCommandShell().label;
+}
+
+export function resolveTerminationPlan(pid, platform = os.platform()) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (platform === "win32") {
+    return {
+      mode: "command",
+      command: "taskkill.exe",
+      args: ["/pid", String(pid), "/T", "/F"],
+    };
+  }
+  return {
+    mode: "signal",
+    signal: "SIGKILL",
+  };
 }
 
 // ===========================
@@ -87,7 +127,54 @@ export function truncate(str, maxLen = 5000) {
   return str.slice(0, maxLen) + `\n... (truncated, ${str.length - maxLen} more chars)`;
 }
 
+export function appendBoundedBuffer(buffer, chunk, maxLen) {
+  const base = buffer || "";
+  const addition = chunk || "";
+  if (!Number.isFinite(maxLen) || maxLen <= 0) return "";
+  const combined = base + addition;
+  if (combined.length <= maxLen) return combined;
+  return combined.slice(combined.length - maxLen);
+}
+
 export function wordCount(text) {
   if (!text || typeof text !== "string") return 0;
   return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export async function writeFileAtomic(filePath, content) {
+  const tmpPath = getAtomicTempPath(filePath);
+  await fs.promises.writeFile(tmpPath, content);
+  try {
+    await fs.promises.rename(tmpPath, filePath);
+  } catch (err) {
+    if (err.code !== "EEXIST" && err.code !== "EPERM") throw err;
+    await fs.promises.rm(filePath, { force: true });
+    await fs.promises.rename(tmpPath, filePath);
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+  }
+}
+
+export function writeFileAtomicSync(filePath, content) {
+  const tmpPath = getAtomicTempPath(filePath);
+  fs.writeFileSync(tmpPath, content);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    if (err.code !== "EEXIST" && err.code !== "EPERM") throw err;
+    fs.rmSync(filePath, { force: true });
+    fs.renameSync(tmpPath, filePath);
+  } finally {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+}
+
+function getAtomicTempPath(filePath) {
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  return path.join(dir, `.${base}.${process.pid}.${Date.now()}.tmp`);
 }

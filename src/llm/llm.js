@@ -6,8 +6,8 @@ import { getProvider } from "./providers/index.js";
 let _loaded = false;
 function ensureEnvLoaded() {
   if (_loaded) return;
-  dotenv.config({ path: getGlobalEnvPath() });
-  dotenv.config(); // also merge local .env if present
+  dotenv.config({ path: getGlobalEnvPath(), quiet: true });
+  dotenv.config({ quiet: true }); // also merge local .env if present
   _loaded = true;
 }
 ensureEnvLoaded();

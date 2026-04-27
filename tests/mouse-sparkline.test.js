@@ -83,15 +83,18 @@ test("mouse: enable/disable monkey-patches stdin.read AND stdin.emit", async () 
   const fakeStdout = { isTTY: true, write: () => {} };
 
   const origRead = fakeStdin.read;
+  const origEmit = fakeStdin.emit;
   enableMouse(fakeStdin, fakeStdout);
 
   // read() should now strip the mouse bytes out
   const chunk = fakeStdin.read();
   assert.equal(chunk, "hiworld");
   assert.notEqual(fakeStdin.read, origRead);
+  assert.notEqual(fakeStdin.emit, origEmit);
 
   disableMouse(fakeStdin, fakeStdout);
   assert.equal(fakeStdin.read, origRead);
+  assert.equal(fakeStdin.emit, origEmit);
 });
 
 test("sparkline: empty array returns empty string", () => {

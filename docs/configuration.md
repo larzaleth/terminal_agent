@@ -42,6 +42,20 @@ Requests with fewer than **15 words** skip the planner entirely — no API call.
 ### `summaryModel` _(string)_
 Model used to compress old conversation history when memory exceeds `maxMemoryTurns`. Again, cheap/fast is fine.
 
+### `embeddingProvider` _(string, optional)_
+Override the provider used for RAG embeddings. Valid values:
+- `"gemini"`
+- `"openai"`
+
+If omitted, embeddings follow the main `provider`, except `anthropic` automatically falls back to Gemini or OpenAI.
+
+### `embeddingModel` _(string, optional)_
+Override the embedding model used by `/index` and semantic search.
+
+Examples:
+- Gemini: `text-embedding-004`
+- OpenAI: `text-embedding-3-small`, `text-embedding-3-large`
+
 ### `maxIterations` _(number, default: `25`)_
 Maximum number of agent-loop cycles per user request. Each cycle = 1 LLM call + any resulting tool executions.
 
@@ -69,11 +83,15 @@ Stored in `~/.myagent.env` (auto-created on first run) or `./.env` (project-loca
 
 | Variable | Used by | Required |
 |---|---|---|
-| `GEMINI_API_KEY` | Gemini provider + default embeddings | Yes (for default config) |
-| `OPENAI_API_KEY` | OpenAI provider | If `provider: "openai"` |
+| `GEMINI_API_KEY` | Gemini provider and Gemini embedding fallback | Yes (for default config) |
+| `OPENAI_API_KEY` | OpenAI provider and OpenAI embedding fallback | If `provider: "openai"` or using OpenAI embeddings |
 | `OPENAI_BASE_URL` | Override OpenAI endpoint (Azure, proxies) | No |
 | `ANTHROPIC_API_KEY` | Anthropic provider | If `provider: "anthropic"` |
 | `ANTHROPIC_BASE_URL` | Override Anthropic endpoint | No |
+| `MYAGENT_EMBEDDING_PROVIDER` | Session-only override for `embeddingProvider` | No |
+| `MYAGENT_EMBEDDING_MODEL` | Session-only override for `embeddingModel` | No |
+| `MYAGENT_WINDOWS_SHELL` | Set to `cmd` to force `run_command` to use Command Prompt on Windows | No |
+| `MYAGENT_POWERSHELL_PATH` | Override the PowerShell executable used by `run_command` on Windows | No |
 | `MYAGENT_AUTO_APPROVE_EDITS` | Set `1` to skip diff preview confirmation | No |
 
 Example `~/.myagent.env`:
