@@ -107,6 +107,13 @@ export function loadConfig() {
   return _cachedConfig;
 }
 
+/**
+ * Invalidate the cached configuration to force a reload from disk/env on the next access.
+ */
+export function invalidateConfig() {
+  _cachedConfig = null;
+}
+
 export function getGlobalEnvPath() {
   return path.join(os.homedir(), GLOBAL_ENV_FILENAME);
 }

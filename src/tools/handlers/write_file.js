@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { isSafePath } from "../../utils/utils.js";
+import { updateIndex } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
@@ -20,6 +21,7 @@ export default async function ({ path: filePath, content }) {
     const backupMsg = backupPath ? `\n   💾 Backup: ${backupPath}` : "";
 
     await fs.writeFile(filePath, content);
+    await updateIndex(filePath);
 
     const lines = content.split("\n").length;
     return `✅ Success: Written to ${filePath}\n   📊 ${content.length} characters, ${lines} lines${backupMsg}`;

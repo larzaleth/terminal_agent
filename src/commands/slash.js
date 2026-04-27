@@ -18,6 +18,8 @@ import { providerCommand } from "./handlers/provider.js";
 import { saveCommand } from "./handlers/save.js";
 import { mcpCommand } from "./handlers/mcp.js";
 import { copyCommand } from "./handlers/copy.js";
+import { undoCommand } from "./handlers/undo.js";
+import { sessionCommand } from "./handlers/session.js";
 
 const HANDLERS = {
   "/help": helpCommand,
@@ -32,6 +34,9 @@ const HANDLERS = {
   "/save": saveCommand,
   "/mcp": mcpCommand,
   "/copy": copyCommand,
+  "/undo": undoCommand,
+  "/session": sessionCommand,
+  "/resume": (args) => sessionCommand(["resume", ...args]),
 };
 
 export const SLASH_COMMANDS = Object.keys(HANDLERS);

@@ -96,7 +96,8 @@ export function clearMemory() {
 // ===========================
 async function summarizeMemory(memory) {
   const config = loadConfig();
-  const recentCount = 10;
+  // Keep at least 5 most recent messages, but if memory is very short, keep only the last 2.
+  const recentCount = Math.min(memory.length > 5 ? 5 : 2, 10);
   const oldMessages = memory.slice(0, -recentCount);
   const recentMessages = memory.slice(-recentCount);
 

@@ -29,7 +29,9 @@ Example: [{"step": "Read package.json to understand dependencies", "action": "ex
 Actions can be: "explore", "analyze", "implement", "test", "respond"`,
     });
 
-    const jsonMatch = text.match(/\[[\s\S]*?\]/);
+    // Robust extraction: strip markdown blocks, then find the outermost [...]
+    const cleanText = text.replace(/```(?:json)?\n?([\s\S]*?)```/g, "$1").trim();
+    const jsonMatch = cleanText.match(/\[[\s\S]*\]/); // greedy match for outermost brackets
     if (jsonMatch) {
       const plan = JSON.parse(jsonMatch[0]);
       if (Array.isArray(plan) && plan.length > 0) return plan;

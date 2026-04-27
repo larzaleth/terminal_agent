@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { isSafePath } from "../../utils/utils.js";
+import { updateIndex } from "../../rag/semantic.js";
 import { exists, confirmExecution, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath }) {
@@ -17,6 +18,7 @@ export default async function ({ path: filePath }) {
     if (!ok) return "🚫 Cancelled: Deletion denied by user.";
 
     await fs.unlink(filePath);
+    await updateIndex(filePath);
     return `✅ Success: Deleted '${filePath}'`;
   } catch (err) {
     if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;

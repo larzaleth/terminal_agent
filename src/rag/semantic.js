@@ -254,6 +254,58 @@ export async function buildIndex(folderPath) {
   console.log(`✅ Index saved with ${index.length} embeddings in ${duration}s`);
 }
 
+/**
+ * Incrementally update the index for a specific file.
+ * Removes old chunks for the file and adds new ones if it exists.
+ */
+export async function updateIndex(filePath) {
+  let index = loadIndex();
+  const normalizedPath = path.resolve(filePath);
+  const relativePath = path.relative(process.cwd(), normalizedPath);
+
+  // Remove old entries
+  const originalLength = index.length;
+  index = index.filter((item) => {
+    const itemPath = path.resolve(item.file);
+    return itemPath !== normalizedPath;
+  });
+
+  // If file exists, re-index it
+  if (fsSync.existsSync(normalizedPath)) {
+    try {
+      const content = await fs.readFile(normalizedPath, "utf-8");
+      const chunks = chunkText(content);
+      const limit = pLimit(EMBEDDING_CONCURRENCY);
+
+      for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
+        const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+        const vectors = await Promise.all(
+          batch.map((chunk) => limit(() => embed(chunk)))
+        );
+
+        batch.forEach((chunk, idx) => {
+          if (vectors[idx]) {
+            index.push({
+              file: relativePath,
+              content: chunk,
+              embedding: normalize(vectors[idx]),
+              type: detectType(relativePath),
+            });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn(`⚠️ Incremental index update failed for ${relativePath}: ${err.message}`);
+    }
+  }
+
+  if (index.length !== originalLength || fsSync.existsSync(normalizedPath)) {
+    await writeFileAtomic(INDEX_FILE, JSON.stringify(index));
+    const stat = await fs.stat(INDEX_FILE);
+    _indexCache = { mtime: stat.mtimeMs, data: index };
+  }
+}
+
 // ===========================
 // 🔹 LOAD INDEX (sync is fine — called once per session, small JSON mostly)
 // ===========================

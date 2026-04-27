@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { isSafePath } from "../../utils/utils.js";
+import { updateIndex } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
 import { getPrompter } from "../../ui/prompter.js";
@@ -89,6 +90,7 @@ export default async function ({ edits }) {
       // Backup before writing
       const backupPath = await backupFile(filePath);
       await fs.writeFile(filePath, currentContent);
+      await updateIndex(filePath);
 
       overallResults.push(`✅ ${filePath}: Applied ${appliedCount} edits (+${added}/-${removed})${backupPath ? ` (Backup: ${backupPath})` : ""}`);
     } catch (err) {

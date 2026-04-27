@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { isSafePath } from "../../utils/utils.js";
+import { updateIndex } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
 import { getPrompter } from "../../ui/prompter.js";
@@ -54,6 +55,7 @@ export default async function ({ path: filePath, target, replacement }) {
     const backupMsg = backupPath ? `\n   💾 Backup: ${backupPath}` : "";
 
     await fs.writeFile(filePath, newContent);
+    await updateIndex(filePath);
 
     const delta = added - removed;
     const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
