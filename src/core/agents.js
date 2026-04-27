@@ -1,6 +1,6 @@
 import pLimit from "p-limit";
 import { tools as builtinTools, toolDeclarations as builtinDecls } from "../tools/tools.js";
-import { loadMemory, saveMemory } from "./memory.js";
+import { loadMemory, saveMemory, compressMemoryIfNeeded } from "./memory.js";
 import { loadIndex, search, buildContext } from "../rag/semantic.js";
 import { createPlan } from "./planner.js";
 import { loadConfig, getSystemPrompt } from "../config/config.js";
@@ -175,6 +175,14 @@ export async function runAgent(userInput, callbacks = {}) {
     }
 
     memory.push({ role: "tool", blocks: resultBlocks });
+
+    // P0: Adaptive context window management — compress if turn gets too long.
+    const nextMemory = await compressMemoryIfNeeded(memory);
+    if (nextMemory !== memory) {
+      // If compressed, replace the local memory object.
+      memory.length = 0;
+      memory.push(...nextMemory);
+    }
   }
 
   if (iterations >= maxIterations) {

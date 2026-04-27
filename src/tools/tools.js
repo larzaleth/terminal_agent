@@ -8,6 +8,7 @@ import create_dir from "./handlers/create_dir.js";
 import delete_file from "./handlers/delete_file.js";
 import get_file_info from "./handlers/get_file_info.js";
 import run_command from "./handlers/run_command.js";
+import batch_edit from "./handlers/batch_edit.js";
 import { terminateChildProcess } from "./shell-runner.js";
 
 // ===========================
@@ -23,6 +24,7 @@ export const tools = {
   delete_file,
   get_file_info,
   run_command,
+  batch_edit,
 };
 
 // ===========================
@@ -124,6 +126,29 @@ export const toolDeclarations = [
       type: "OBJECT",
       properties: { cmd: { type: "STRING", description: "Shell command to execute" } },
       required: ["cmd"],
+    },
+  },
+  {
+    name: "batch_edit",
+    description:
+      "Apply multiple edits across one or more files in a single turn. Useful for refactorings or coordinated changes. Each edit must have a unique target string.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        edits: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              path: { type: "STRING", description: "File path to edit" },
+              target: { type: "STRING", description: "Exact string to find" },
+              replacement: { type: "STRING", description: "Replacement string" },
+            },
+            required: ["path", "target", "replacement"],
+          },
+        },
+      },
+      required: ["edits"],
     },
   },
 ];

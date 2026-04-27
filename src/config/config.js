@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { detectOS, detectShell } from "../utils/utils.js";
+import { detectOS, detectShell, getGitInfo } from "../utils/utils.js";
 import {
   MAX_ITERATIONS_DEFAULT,
   MAX_MEMORY_TURNS_DEFAULT,
@@ -28,6 +28,12 @@ export function getSystemPrompt() {
   const osName = detectOS();
   const shell = detectShell();
   const cwd = process.cwd();
+  const git = getGitInfo();
+
+  let gitSection = "";
+  if (git.isRepo) {
+    gitSection = `\n- Git: branch=${git.branch}, last_commit=${git.lastCommit}, status=${git.status}`;
+  }
 
   return `You are a highly capable AI coding agent running in the user's terminal.
 You have access to powerful tools via Function Calling: read files, write files, edit specific parts of files, search code with grep, list directories, run shell commands, and more.
@@ -56,7 +62,7 @@ You have access to powerful tools via Function Calling: read files, write files,
 ## Environment
 - OS: ${osName}
 - Shell: ${shell}
-- Working Directory: ${cwd}`;
+- Working Directory: ${cwd}${gitSection}`;
 }
 
 // ===========================

@@ -30,6 +30,7 @@ export const RAG_CONTEXT_MAX_CHARS = 3000;
 // Agent loop
 export const MAX_ITERATIONS_DEFAULT = 25;
 export const MAX_MEMORY_TURNS_DEFAULT = 20;
+export const MAX_MEMORY_TOKENS = 50_000; // Summarize when memory exceeds this estimated token count.
 export const MAX_TOOL_OUTPUT_CHARS = 8000;
 export const MAX_COMMAND_OUTPUT_CHARS = 5000;
 export const COMMAND_TIMEOUT_MS = 60_000;

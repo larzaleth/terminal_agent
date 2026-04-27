@@ -1,6 +1,7 @@
 import os from "os";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
 
 // ===========================
 // 🔹 OS & SHELL DETECTION
@@ -9,6 +10,26 @@ export function detectOS() {
   const platform = os.platform();
   const map = { win32: "Windows", darwin: "macOS", linux: "Linux" };
   return map[platform] || platform;
+}
+
+export function getGitInfo() {
+  try {
+    // Check if we are in a git repo
+    execSync("git rev-parse --is-inside-work-tree", { stdio: "ignore" });
+    
+    const branch = execSync("git branch --show-current", { encoding: "utf8" }).trim();
+    const status = execSync("git status --short", { encoding: "utf8" }).trim();
+    const lastCommit = execSync("git log -1 --oneline", { encoding: "utf8" }).trim();
+    
+    return {
+      isRepo: true,
+      branch,
+      status: status || "clean",
+      lastCommit,
+    };
+  } catch {
+    return { isRepo: false };
+  }
 }
 
 export function resolveCommandShell(platform = os.platform(), env = process.env) {
@@ -139,6 +160,15 @@ export function appendBoundedBuffer(buffer, chunk, maxLen) {
 export function wordCount(text) {
   if (!text || typeof text !== "string") return 0;
   return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Rough estimation of token count: ~4 chars per token.
+ * Used for adaptive context window management.
+ */
+export function estimateTokens(text) {
+  if (!text || typeof text !== "string") return 0;
+  return Math.ceil(text.length / 4);
 }
 
 export async function writeFileAtomic(filePath, content) {

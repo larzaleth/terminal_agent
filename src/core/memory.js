@@ -1,8 +1,8 @@
 import fs from "fs";
 import { getProvider } from "../llm/providers/index.js";
 import { loadConfig } from "../config/config.js";
-import { MEMORY_FILE } from "../config/constants.js";
-import { writeFileAtomicSync } from "../utils/utils.js";
+import { MEMORY_FILE, MAX_MEMORY_TOKENS } from "../config/constants.js";
+import { writeFileAtomicSync, estimateTokens } from "../utils/utils.js";
 
 // ===========================
 // 🔹 LOAD (with auto-migration from legacy Gemini {role, parts} format)
@@ -52,15 +52,36 @@ function migrateMessage(msg) {
 }
 
 // ===========================
-// 🔹 SAVE (with smart truncate via LLM summary)
+// 🔹 SAVE
 // ===========================
 export async function saveMemory(memory) {
+  const compressed = await compressMemoryIfNeeded(memory);
+  writeFileAtomicSync(MEMORY_FILE, JSON.stringify(compressed, null, 2));
+}
+
+/**
+ * Adaptive context window: summarize if too many turns OR too many tokens.
+ * @param {Array} memory 
+ * @returns {Promise<Array>} Compressed memory
+ */
+export async function compressMemoryIfNeeded(memory) {
   const config = loadConfig();
   const maxTurns = config.maxMemoryTurns || 20;
-  if (memory.length > maxTurns) {
-    memory = await summarizeMemory(memory);
+
+  const estimatedTokens = memory.reduce((sum, msg) => {
+    const text = (msg.blocks || [])
+      .map((b) => (typeof b.text === "string" ? b.text : JSON.stringify(b)))
+      .join("");
+    return sum + estimateTokens(text);
+  }, 0);
+
+  if (memory.length > maxTurns || estimatedTokens > MAX_MEMORY_TOKENS) {
+    if (process.env.MYAGENT_DEBUG === "1") {
+      console.error(`[DEBUG] Summarizing memory: turns=${memory.length}/${maxTurns}, tokens=${estimatedTokens}/${MAX_MEMORY_TOKENS}`);
+    }
+    return await summarizeMemory(memory);
   }
-  writeFileAtomicSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
+  return memory;
 }
 
 // ===========================
