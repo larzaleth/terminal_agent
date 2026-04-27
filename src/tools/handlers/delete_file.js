@@ -1,0 +1,25 @@
+import fs from "fs/promises";
+import { isSafePath } from "../../utils/utils.js";
+import { exists, confirmExecution, UNSAFE_PATH_MSG } from "./base.js";
+
+export default async function ({ path: filePath }) {
+  try {
+    console.log(`\n🗑️ [delete_file] ${filePath}`);
+    if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
+    if (!(await exists(filePath))) return `❌ Error: File not found at '${filePath}'.`;
+
+    const stat = await fs.stat(filePath);
+    if (stat.isDirectory()) {
+      return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use rm -rf via run_command (caution advised).`;
+    }
+
+    const ok = await confirmExecution(`Delete ${filePath}?`, "destructive");
+    if (!ok) return "🚫 Cancelled: Deletion denied by user.";
+
+    await fs.unlink(filePath);
+    return `✅ Success: Deleted '${filePath}'`;
+  } catch (err) {
+    if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
+    return `❌ Error deleting file: ${err.message}`;
+  }
+}
