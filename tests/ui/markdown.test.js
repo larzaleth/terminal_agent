@@ -76,7 +76,7 @@ test("ToolCallBlock: running tool with liveOutput shows the stream", () => {
     })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("run_command"));
+  assert.ok(out.includes("RUN_COMMAND"));
   assert.ok(out.includes("added 42 packages"));
   r.unmount();
 });
@@ -91,6 +91,6 @@ test("ToolCallBlock: running tool without liveOutput falls back to placeholder",
     })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("(running"));
+  assert.ok(out.includes("Executing..."));
   r.unmount();
 });

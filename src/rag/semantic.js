@@ -325,21 +325,40 @@ export function loadIndex() {
 }
 
 // ===========================
-// 🔹 SEARCH
+// 🔹 SEARCH (Hybrid: Vector + Keyword)
 // ===========================
 export async function search(query, index, options = {}) {
-  const { topK = RAG_TOP_K, threshold = RAG_THRESHOLD } = options;
+  const { topK = RAG_TOP_K, threshold = RAG_THRESHOLD, alpha = 0.7 } = options;
   if (!index || index.length === 0) return [];
 
   const qVec = normalize(await embed(query));
-  const lowerQuery = query.toLowerCase();
+  const queryTerms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
 
-  return index
-    .map((item) => {
-      let score = dotProduct(qVec, item.embedding);
-      if (item.content.toLowerCase().includes(lowerQuery)) score += 0.1;
-      return { ...item, score };
-    })
+  const results = index.map((item) => {
+    // 1. Vector Score (Semantic)
+    const vectorScore = dotProduct(qVec, item.embedding);
+
+    // 2. Keyword Score (Lexical)
+    let keywordScore = 0;
+    if (queryTerms.length > 0) {
+      const contentLower = item.content.toLowerCase();
+      let matches = 0;
+      for (const term of queryTerms) {
+        if (contentLower.includes(term)) matches++;
+      }
+      keywordScore = matches / queryTerms.length;
+      
+      // Bonus for exact symbol match (case sensitive or specific word boundaries)
+      if (item.content.includes(query)) keywordScore += 0.2;
+    }
+
+    // 3. Combined Score
+    const score = (alpha * vectorScore) + ((1 - alpha) * keywordScore);
+
+    return { ...item, score, vectorScore, keywordScore };
+  });
+
+  return results
     .filter((r) => r.score >= threshold)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);

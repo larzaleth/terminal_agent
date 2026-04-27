@@ -15,8 +15,8 @@ test("Header: shows provider, model and cost", () => {
     h(Header, { provider: "gemini", model: "gemini-2.5-flash", cost: 0.00123, iteration: 0 })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("AI Coding Agent"));
-  assert.ok(out.includes("gemini"));
+  assert.ok(out.includes("AI AGENT"));
+  assert.ok(out.includes("GEMINI"));
   assert.ok(out.includes("gemini-2.5-flash"));
   assert.ok(out.includes("$0.001230"));
   r.unmount();
@@ -26,7 +26,7 @@ test("Header: shows iteration counter when running", () => {
   const r = render(
     h(Header, { provider: "openai", model: "gpt-4o-mini", cost: 0, iteration: 3, maxIterations: 25 })
   );
-  assert.ok(stripAnsi(r.lastFrame()).includes("iter 3/25"));
+  assert.ok(stripAnsi(r.lastFrame()).includes("STEP 3/25"));
   r.unmount();
 });
 
@@ -64,8 +64,8 @@ test("Sidebar: displays session info", () => {
     })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("anthropic"));
-  assert.ok(out.includes("Recent tools"));
+  assert.ok(out.includes("ANTHROPIC"));
+  assert.ok(out.includes("RECENT TOOLS"));
   assert.ok(out.includes("read_file"));
   assert.ok(out.includes("$0.001500"));
   assert.ok(out.includes("45.5%"));
@@ -148,9 +148,8 @@ test("ToolCallBlock: collapsed shows only summary", () => {
     })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("read_file"));
+  assert.ok(out.includes("READ_FILE"));
   assert.ok(out.includes("path=src/utils.js"));
-  assert.ok(out.includes("▶"));
   assert.ok(!out.includes("1: line"));
   r.unmount();
 });
@@ -166,10 +165,9 @@ test("ToolCallBlock: expanded shows args + result", () => {
     })
   );
   const out = stripAnsi(r.lastFrame());
-  assert.ok(out.includes("▼"));
   assert.ok(out.includes("contents here"));
-  assert.ok(out.includes("args:"));
-  assert.ok(out.includes("result:"));
+  assert.ok(out.includes("INPUT"));
+  assert.ok(out.includes("OUTPUT"));
   r.unmount();
 });
 
@@ -209,6 +207,6 @@ test("Message: assistant with tool_call block", () => {
   const out = stripAnsi(r.lastFrame());
   assert.ok(out.includes("Assistant"));
   assert.ok(out.includes("Reading the file..."));
-  assert.ok(out.includes("read_file"));
+  assert.ok(out.includes("READ_FILE"));
   r.unmount();
 });

@@ -99,12 +99,12 @@ export class OpenAIProvider {
     }
   }
 
-  async generate({ model, prompt, temperature = 0.1 }) {
+  async generate({ model, prompt, temperature = 0.1, signal }) {
     const resp = await this.client.chat.completions.create({
       model,
       messages: [{ role: "user", content: prompt }],
       temperature,
-    });
+    }, { signal });
     return resp.choices?.[0]?.message?.content || "";
   }
 

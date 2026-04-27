@@ -10,6 +10,7 @@ import { handleSlashCommand } from "../src/commands/slash.js";
 import { runAgent } from "../src/core/agents.js";
 import { globalTracker } from "../src/llm/cost-tracker.js";
 import { shutdownMcp } from "../src/mcp/client.js";
+import { startWatcher, stopWatcher } from "../src/rag/watcher.js";
 
 // ===========================
 // 🔑 API KEY SETUP
@@ -62,7 +63,9 @@ function showBanner() {
 async function runTui() {
   const { startTui } = await import("../src/ui/run.js");
   const { instance } = startTui();
+  startWatcher();
   await instance.waitUntilExit();
+  stopWatcher();
   await shutdownMcp().catch(() => {});
   process.exit(0);
 }
@@ -77,10 +80,13 @@ async function runReadline() {
 
   process.on("SIGINT", async () => {
     console.log(chalk.dim("\n\n👋 Goodbye!\n"));
+    stopWatcher();
     await shutdownMcp().catch(() => {});
     rl.close();
     process.exit(0);
   });
+
+  startWatcher();
 
   while (true) {
     const input = await rl.question(chalk.green.bold("🧑 > "));
@@ -88,6 +94,7 @@ async function runReadline() {
     if (!trimmed) continue;
     if (trimmed === "exit" || trimmed === "quit") {
       console.log(chalk.dim("\n👋 Goodbye!\n"));
+      stopWatcher();
       await shutdownMcp().catch(() => {});
       rl.close();
       process.exit(0);

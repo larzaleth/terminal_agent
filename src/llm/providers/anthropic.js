@@ -100,13 +100,13 @@ export class AnthropicProvider {
     yield { type: "usage", inputTokens, outputTokens };
   }
 
-  async generate({ model, prompt, temperature = 0.1 }) {
+  async generate({ model, prompt, temperature = 0.1, signal }) {
     const resp = await this.client.messages.create({
       model,
       max_tokens: 2048,
       temperature,
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { abortSignal: signal });
     return resp.content?.filter((c) => c.type === "text").map((c) => c.text).join("") || "";
   }
 

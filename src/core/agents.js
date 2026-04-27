@@ -14,6 +14,19 @@ import { getMcpTools } from "../mcp/client.js";
 /**
  * Main agent loop — provider-agnostic, streaming, parallel tool execution,
  * retry logic, MCP tool merge.
+ * 
+ * @param {string} userInput - The user's input prompt.
+ * @param {Object} [callbacks] - Optional event callbacks for the UI.
+ * @param {Function} [callbacks.onPlan] - Called when a plan is generated: `(plan: Array<{step: string, action: string}>) => void`.
+ * @param {Function} [callbacks.onThinking] - Called when the agent is "thinking" (waiting for LLM response).
+ * @param {Function} [callbacks.onText] - Called with chunks of text as they stream from the LLM: `(text: string) => void`.
+ * @param {Function} [callbacks.onToolCall] - Called when a tool is invoked: `(name: string, args: Object) => void`.
+ * @param {Function} [callbacks.onToolResult] - Called when a tool finishes: `(name: string, summary: string) => void`.
+ * @param {Function} [callbacks.onRetry] - Called when an API request fails and is retried.
+ * @param {Function} [callbacks.onDone] - Called when the agent loop naturally finishes.
+ * @param {Function} [callbacks.onError] - Called if a fatal error occurs in the loop: `(err: Error) => void`.
+ * @param {AbortSignal} [callbacks.signal] - AbortSignal to cancel the agent loop early.
+ * @returns {Promise<string>} The complete final response string from the agent.
  */
 export async function runAgent(userInput, callbacks = {}) {
   const {
@@ -193,7 +206,7 @@ export async function runAgent(userInput, callbacks = {}) {
 
   onDone();
 
-  await saveMemory(memory);
+  await saveMemory(memory, signal);
   globalTracker.saveToFile(agentModel);
 
   return finalResponse;

@@ -20,12 +20,14 @@
  *
  * ─── Provider interface ──────────────────────────────────────────────
  * class Provider {
- *   async *stream({ model, systemInstruction, messages, tools }):
+ *   async *stream({ model, systemInstruction, messages, tools, signal }):
  *       AsyncIterator<
  *         | { type: "text", text: string }
  *         | { type: "tool_call", id, name, args }
  *         | { type: "usage", inputTokens, outputTokens }
  *       >
+ *
+ *   async generate({ model, prompt, signal }): Promise<string>
  *
  *   async embed(text): Promise<number[]>
  * }

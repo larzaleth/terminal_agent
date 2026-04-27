@@ -54,17 +54,18 @@ function migrateMessage(msg) {
 // ===========================
 // 🔹 SAVE
 // ===========================
-export async function saveMemory(memory) {
-  const compressed = await compressMemoryIfNeeded(memory);
+export async function saveMemory(memory, signal) {
+  const compressed = await compressMemoryIfNeeded(memory, signal);
   writeFileAtomicSync(MEMORY_FILE, JSON.stringify(compressed, null, 2));
 }
 
 /**
  * Adaptive context window: summarize if too many turns OR too many tokens.
  * @param {Array} memory 
+ * @param {AbortSignal} [signal]
  * @returns {Promise<Array>} Compressed memory
  */
-export async function compressMemoryIfNeeded(memory) {
+export async function compressMemoryIfNeeded(memory, signal) {
   const config = loadConfig();
   const maxTurns = config.maxMemoryTurns || 20;
 
@@ -79,14 +80,12 @@ export async function compressMemoryIfNeeded(memory) {
     if (process.env.MYAGENT_DEBUG === "1") {
       console.error(`[DEBUG] Summarizing memory: turns=${memory.length}/${maxTurns}, tokens=${estimatedTokens}/${MAX_MEMORY_TOKENS}`);
     }
-    return await summarizeMemory(memory);
+    return await summarizeMemory(memory, signal);
   }
   return memory;
 }
 
-// ===========================
-// 🔹 CLEAR
-// ===========================
+// ... clearMemory stays same ...
 export function clearMemory() {
   writeFileAtomicSync(MEMORY_FILE, "[]");
 }
@@ -94,9 +93,8 @@ export function clearMemory() {
 // ===========================
 // 🔥 LLM-POWERED SUMMARIZATION
 // ===========================
-async function summarizeMemory(memory) {
+async function summarizeMemory(memory, signal) {
   const config = loadConfig();
-  // Keep at least 5 most recent messages, but if memory is very short, keep only the last 2.
   const recentCount = Math.min(memory.length > 5 ? 5 : 2, 10);
   const oldMessages = memory.slice(0, -recentCount);
   const recentMessages = memory.slice(-recentCount);
@@ -130,15 +128,26 @@ ${textParts.slice(0, 4000)}
 
 Respond with ONLY the summary paragraph, no extra formatting.`;
 
-    const summaryText = (await provider.generate({ model: config.summaryModel, prompt })) ||
-      "Previous conversation context was summarized.";
+    // 10s timeout for summarization to avoid hanging the app
+    const timeoutSignal = AbortSignal.timeout(10000);
+    const combinedSignal = signal 
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
+
+    const summaryText = (await provider.generate({ 
+      model: config.summaryModel, 
+      prompt,
+      signal: combinedSignal 
+    })) || "Previous conversation context was summarized.";
 
     return [
       { role: "user", blocks: [{ type: "text", text: `[CONVERSATION SUMMARY]\n${summaryText}\n[END SUMMARY]` }] },
       ...recentMessages,
     ];
   } catch (err) {
-    console.log(`⚠️ Memory summarization fallback: ${err.message}`);
+    if (process.env.MYAGENT_DEBUG === "1") {
+      console.error(`[DEBUG] Memory summarization failed/skipped: ${err.message}`);
+    }
     return [
       { role: "user", blocks: [{ type: "text", text: "[CONTEXT] Previous conversation was summarized. Maintain context and patterns." }] },
       ...recentMessages,

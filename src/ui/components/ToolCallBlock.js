@@ -3,19 +3,20 @@ import Spinner from "ink-spinner";
 import { h } from "../h.js";
 
 const TOOL_ICON = {
-  read_file: "📄",
-  write_file: "✍️",
-  edit_file: "✏️",
-  list_dir: "📂",
-  grep_search: "🔍",
-  create_dir: "📁",
-  delete_file: "🗑️",
-  get_file_info: "ℹ️",
-  run_command: "🚀",
+  read_file: "󰈙",
+  write_file: "󰏫",
+  edit_file: "󰏫",
+  list_dir: "󰉓",
+  grep_search: "󰍉",
+  create_dir: "󰉋",
+  delete_file: "󰩹",
+  get_file_info: "󰋽",
+  run_command: "󰚗",
+  batch_edit: "󰒔",
 };
 
 function truncateInline(s, max = 60) {
-  if (typeof s !== "string") s = JSON.stringify(s);
+  if (typeof s !== "string") s = String(s);
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
 }
@@ -23,39 +24,32 @@ function truncateInline(s, max = 60) {
 function argsSummary(args) {
   if (!args || typeof args !== "object") return "";
   return Object.entries(args)
-    .map(([k, v]) => `${k}=${truncateInline(v, 40)}`)
+    .map(([k, v]) => `${k}=${truncateInline(v, 20)}`)
     .join(", ");
 }
 
 export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded, focused }) {
-  const icon = TOOL_ICON[tool] || "🔧";
-  const statusColor = status === "running" ? "yellow" : status === "error" ? "red" : "green";
-  const statusMark = status === "running" ? h(Spinner, { type: "dots" }) : status === "error" ? "✗" : "✓";
-
+  const icon = TOOL_ICON[tool] || "󱗼";
+  const isRunning = status === "running";
+  const isError = status === "error";
+  const statusColor = isRunning ? "yellow" : isError ? "red" : "green";
+  
   const header = h(
     Box,
-    null,
-    h(Text, { color: focused ? "cyan" : statusColor }, expanded ? "▼ " : "▶ "),
-    h(Text, null, `${icon} `),
-    h(Text, { bold: true, color: focused ? "cyan" : "white" }, tool),
-    h(Text, { color: "gray" }, `(${argsSummary(args)})`),
-    h(Text, { color: statusColor }, "  "),
-    typeof statusMark === "string"
-      ? h(Text, { color: statusColor }, statusMark)
-      : h(Text, { color: statusColor }, statusMark)
+    { gap: 1 },
+    h(Text, { color: statusColor }, isRunning ? h(Spinner, { type: "dots" }) : isError ? "" : ""),
+    h(Text, { color: statusColor }, icon),
+    h(Text, { bold: true, color: focused ? "cyan" : "white" }, tool.toUpperCase()),
+    !expanded && h(Text, { color: "gray", dimColor: true }, `(${argsSummary(args)})`)
   );
 
-  if (!expanded) return h(Box, { flexDirection: "column", marginLeft: 2 }, header);
+  if (!expanded) return h(Box, { flexDirection: "column", marginLeft: 2, marginY: 0 }, header);
 
-  const argsLines = args && Object.keys(args).length
-    ? JSON.stringify(args, null, 2).split("\n")
-    : ["(no args)"];
-
-  const resultText = status === "running"
-    ? (liveOutput && liveOutput.trim() ? liveOutput : "(running…)")
+  const resultText = isRunning
+    ? (liveOutput && liveOutput.trim() ? liveOutput : "Executing...")
     : typeof result === "string"
       ? result.length > 1200
-        ? result.slice(0, 1200) + "\n…(truncated — full result preserved in memory)"
+        ? result.slice(0, 1200) + "\n…(truncated)"
         : result
       : JSON.stringify(result || "", null, 2);
 
@@ -65,15 +59,22 @@ export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded
       flexDirection: "column",
       marginLeft: 2,
       paddingX: 1,
-      borderStyle: "round",
+      borderStyle: "single",
       borderColor: focused ? "cyan" : "gray",
+      paddingY: 0,
+      marginBottom: 1,
     },
     header,
-    h(Text, { color: "gray", italic: true }, "  args:"),
-    ...argsLines.map((line, i) => h(Text, { key: `a${i}`, color: "gray" }, `  ${line}`)),
-    h(Text, { color: "gray", italic: true }, "  result:"),
-    ...resultText.split("\n").map((line, i) =>
-      h(Text, { key: `r${i}`, color: status === "error" ? "red" : "white" }, `  ${line}`)
+    h(
+      Box,
+      { flexDirection: "column", marginLeft: 2, marginTop: 1 },
+      h(Text, { color: "blue", dimColor: true, bold: true }, "INPUT"),
+      h(Text, { color: "gray" }, JSON.stringify(args, null, 2)),
+      h(Box, { marginTop: 1 }),
+      h(Text, { color: "blue", dimColor: true, bold: true }, "OUTPUT"),
+      ...resultText.split("\n").map((line, i) =>
+        h(Text, { key: `r${i}`, color: isError ? "red" : "white" }, line)
+      )
     )
   );
 }

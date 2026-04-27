@@ -26,13 +26,13 @@
 ## 🚀 Next Priorities (v2.6.0+)
 
 ### 1. Smart Features (Priority High)
-- [ ] **Context Window Management**: Adaptive trimming/summarization when tokens approach limits.
-- [ ] **Git-Aware System Prompt**: Auto-include branch name, status, and modified files in system instructions.
-- [ ] **Multi-file Edit Tool**: A `batch_edit` tool to apply multiple changes across different files in one turn.
+- [x] **Context Window Management**: Adaptive trimming/summarization when tokens approach limits.
+- [x] **Git-Aware System Prompt**: Auto-include branch name, status, and modified files in system instructions.
+- [x] **Multi-file Edit Tool**: A `batch_edit` tool to apply multiple changes across different files in one turn.
 
 ### 2. User Experience (Priority Medium)
-- [ ] **Session Persistence**: Save and resume conversations across terminal restarts using `/resume`.
-- [ ] **Undo/Rollback Command**: A `/undo` slash command to restore the last backup created by the agent.
+- [x] **Session Persistence**: Save and resume conversations across terminal restarts using `/session` and `/resume`.
+- [x] **Undo/Rollback Command**: A `/undo` slash command to restore the last backup created by the agent.
 - [ ] **Search Improvement**: Upgrade RAG with Hybrid Search (BM25 + Vector) for better retrieval of exact symbols.
 
 ### 3. Advanced Agentic Power (Priority Low)

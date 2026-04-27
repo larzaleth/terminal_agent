@@ -107,77 +107,114 @@ export function Sidebar({
   turnHistory = [],
   statsExpanded = false,
 }) {
+  const isIdle = status === "idle";
+  const statusColor = isIdle ? "green" : "yellow";
+
   return h(
     Box,
     {
       flexDirection: "column",
       paddingX: 1,
-      borderStyle: "round",
-      borderColor: "gray",
-      minWidth: 28,
+      borderStyle: "single",
+      borderColor: "blue",
+      minWidth: 30,
     },
-    h(Text, { bold: true, color: "cyan" }, "  Session"),
-    h(Box, { marginY: 0 }, h(Text, { color: "gray" }, "─".repeat(26))),
+    // Header
+    h(
+      Box,
+      { marginBottom: 1, justifyContent: "center" },
+      h(Text, { bold: true, color: "blueBright" }, " MONITOR")
+    ),
 
-    h(Stat, { label: "Provider", value: provider, color: "magenta" }),
-    h(Stat, { label: "Model", value: truncMid(model, 16), color: "white" }),
+    // Status Section
+    h(
+      Box,
+      { flexDirection: "column", marginBottom: 1 },
+      h(Text, { color: "gray", dimColor: true }, "STATUS"),
+      h(
+        Box,
+        null,
+        h(Text, { color: statusColor }, isIdle ? "●" : h(Spinner, { type: "dots" })),
+        h(Text, { color: statusColor, bold: true }, ` ${status.toUpperCase()}`)
+      ),
+      currentTool
+        ? h(
+            Box,
+            { marginLeft: 2 },
+            h(Text, { color: "gray" }, "↳ "),
+            h(Text, { color: "white", dimColor: true }, truncMid(currentTool, 20))
+          )
+        : null
+    ),
 
-    h(Box, { marginTop: 1 }, h(Text, { bold: true, color: "cyan" }, "  Activity")),
-    h(Box, null, h(Text, { color: "gray" }, "─".repeat(26))),
+    h(Text, { color: "gray", dimColor: true }, "─".repeat(28)),
 
-    status === "idle"
-      ? h(Text, { color: "green" }, "● idle")
-      : h(
-          Box,
-          null,
-          h(Text, { color: "yellow" }, h(Spinner, { type: "dots" })),
-          h(Text, { color: "yellow" }, ` ${status}`)
-        ),
-    currentTool ? h(Text, { color: "gray" }, `  → ${currentTool}`) : null,
+    // Session Info
+    h(
+      Box,
+      { flexDirection: "column", marginY: 1 },
+      h(Stat, { label: "PROVIDER", value: provider.toUpperCase(), color: "magentaBright" }),
+      h(Stat, { label: "MODEL", value: truncMid(model, 16), color: "white" })
+    ),
 
-    recentTools.length > 0
-      ? h(
-          Box,
-          { marginTop: 1, flexDirection: "column" },
-          h(Text, { bold: true, color: "cyan" }, "  Recent tools"),
-          h(Text, { color: "gray" }, "─".repeat(26)),
-          ...recentTools
-            .slice(-5)
-            .reverse()
-            .map((t, i) =>
-              h(
-                Box,
-                { key: `rt${i}` },
-                h(Text, { color: t.status === "error" ? "red" : "green" }, t.status === "error" ? "✗ " : "✓ "),
-                h(Text, { color: "white" }, truncMid(t.name, 22))
-              )
-            )
-        )
-      : null,
+    h(Text, { color: "gray", dimColor: true }, "─".repeat(28)),
 
-    h(Box, { marginTop: 1 }, h(Text, { bold: true, color: "cyan" }, "  Cost")),
-    h(Box, null, h(Text, { color: "gray" }, "─".repeat(26))),
-    h(Stat, { label: "Spent", value: `$${(cost || 0).toFixed(6)}`, color: "green" }),
-    h(Stat, { label: "Tokens", value: (tokens || 0).toLocaleString(), color: "white" }),
-    h(Stat, { label: "Cache", value: `${cacheHitRate || 0}%`, color: "cyan" }),
+    // Metrics
+    h(
+      Box,
+      { flexDirection: "column", marginY: 1 },
+      h(Stat, {
+        label: "SPENT",
+        value: `$${(cost || 0).toFixed(6)}`,
+        color: "greenBright",
+      }),
+      h(Stat, {
+        label: "TOKENS",
+        value: (tokens || 0).toLocaleString(),
+        color: "whiteBright",
+      }),
+      h(Stat, {
+        label: "CACHE",
+        value: `${cacheHitRate || 0}%`,
+        color: "cyanBright",
+      })
+    ),
 
     h(TurnChart, { turnHistory, expanded: statsExpanded }),
 
-    mcpServers.length > 0
-      ? h(
-          Box,
-          { marginTop: 1, flexDirection: "column" },
-          h(Text, { bold: true, color: "cyan" }, "  MCP"),
-          h(Text, { color: "gray" }, "─".repeat(26)),
-          ...mcpServers.map((s, i) =>
+    // Tools Activity
+    recentTools.length > 0 &&
+      h(
+        Box,
+        { flexDirection: "column", marginTop: 1 },
+        h(Text, { color: "gray", dimColor: true }, "RECENT TOOLS"),
+        ...recentTools
+          .slice(-4)
+          .reverse()
+          .map((t, i) =>
             h(
-              Text,
-              { key: `mcp${i}`, color: "green" },
-              `● ${s.server} (${s.tools?.length ?? 0})`
+              Box,
+              { key: `rt${i}` },
+              h(Text, { color: t.status === "error" ? "red" : "green" }, t.status === "error" ? " " : " "),
+              h(Text, { color: "gray", dimColor: true }, ` ${truncMid(t.name, 22)}`)
             )
           )
+      ),
+
+    // MCP Section
+    mcpServers.length > 0 &&
+      h(
+        Box,
+        { flexDirection: "column", marginTop: 1 },
+        h(Text, { color: "gray", dimColor: true }, "MCP SERVERS"),
+        ...mcpServers.map((s, i) =>
+          h(
+            Text,
+            { key: `mcp${i}`, color: "cyan", dimColor: true },
+            ` ${s.server} (${s.tools?.length ?? 0})`
+          )
         )
-      : null
+      )
   );
 }
 

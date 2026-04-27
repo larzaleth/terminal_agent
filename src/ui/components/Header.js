@@ -7,29 +7,37 @@ export function Header({ provider, model, cost, iteration, maxIterations }) {
     Box,
     {
       paddingX: 1,
-      borderStyle: "round",
-      borderColor: "cyan",
+      borderStyle: "single",
+      borderColor: "blue",
       justifyContent: "space-between",
     },
     h(
       Box,
-      null,
-      h(Text, { bold: true, color: "cyan" }, "🤖 AI Coding Agent"),
-      h(Text, { color: "gray" }, "  v2.4")
+      { gap: 1 },
+      h(Text, { bold: true, color: "blueBright" }, " AI AGENT"),
+      h(Text, { color: "blue", dimColor: true }, "v2.5.0"),
+      h(Text, { color: "gray" }, "┃"),
+      h(Text, { color: "whiteBright" }, provider.toUpperCase()),
+      h(Text, { color: "gray", dimColor: true }, "»"),
+      h(Text, { color: "cyan" }, model)
     ),
     h(
       Box,
-      null,
-      h(Text, { color: "magenta" }, `${provider}`),
-      h(Text, { color: "gray" }, ":"),
-      h(Text, { color: "white" }, `${model}`),
-      h(Text, { color: "gray" }, "  │  "),
-      h(Text, { color: "green" }, costStr),
+      { gap: 1 },
+      h(
+        Box,
+        null,
+        h(Text, { color: "gray", dimColor: true }, "COST "),
+        h(Text, { color: "greenBright", bold: true }, costStr)
+      ),
       iteration
         ? h(
-            Text,
-            { color: "yellow" },
-            `  │  iter ${iteration}/${maxIterations}`
+            Box,
+            null,
+            h(Text, { color: "gray" }, " ┃ "),
+            h(Text, { color: "gray", dimColor: true }, "STEP "),
+            h(Text, { color: "yellowBright", bold: true }, `${iteration}`),
+            h(Text, { color: "gray", dimColor: true }, `/${maxIterations}`)
           )
         : null
     )

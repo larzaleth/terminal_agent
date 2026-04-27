@@ -97,12 +97,12 @@ export class GeminiProvider {
     }
   }
 
-  async generate({ model, prompt, temperature = 0.1 }) {
+  async generate({ model, prompt, temperature = 0.1, signal }) {
     const resp = await this.client.models.generateContent({
       model,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: { temperature },
-    });
+    }, { signal });
     return resp?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
