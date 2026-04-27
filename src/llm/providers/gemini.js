@@ -33,8 +33,12 @@ export class GeminiProvider {
       const parts = [];
       for (const b of m.blocks) {
         if (b.type === "text") parts.push({ text: b.text });
-        else if (b.type === "tool_call")
-          parts.push({ functionCall: { name: b.name, args: b.args || {} } });
+        else if (b.type === "thought") parts.push({ thought: b.text });
+        else if (b.type === "tool_call") {
+          const callObj = { functionCall: { name: b.name, args: b.args || {} } };
+          if (b.thoughtSignature) callObj.thoughtSignature = b.thoughtSignature;
+          parts.push(callObj);
+        }
       }
       if (parts.length) out.push({ role, parts });
     }
@@ -47,32 +51,31 @@ export class GeminiProvider {
     return [{ functionDeclarations: tools }];
   }
 
-  async *stream({ model, systemInstruction, messages, tools }) {
+  async *stream({ model, systemInstruction, messages, tools, signal }) {
     const contents = this._toGeminiContents(messages);
     const geminiTools = this._toGeminiTools(tools);
 
-    // Disable Gemini 2.5+ "thinking" mode. Multi-turn tool loops require
-    // round-tripping the opaque `thoughtSignature` on every follow-up call,
-    // which our transcript doesn't preserve — leading to
-    //   "Function call is missing thought_signature in function call parts."
-    // Budget 0 keeps behaviour deterministic and cheaper; re-enable per-call
-    // by plumbing thoughtSignatures through the message history.
+    // If using a model that supports thinking (like gemini-2.0-flash-thinking-exp),
+    // we want to preserve thoughts. For standard models, budget 0 is ignored or harmless.
     const config = {
       systemInstruction,
       tools: geminiTools,
-      thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+      thinkingConfig: { includeThoughts: true },
     };
 
     const resp = await this.client.models.generateContentStream({
       model,
       contents,
       config,
-    });
+    }, { signal });
 
     let lastUsage = null;
     for await (const chunk of resp) {
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
+        if (part.thought) {
+          yield { type: "thought", text: part.thought };
+        }
         if (part.text) {
           yield { type: "text", text: part.text };
         }
@@ -82,6 +85,7 @@ export class GeminiProvider {
             id: part.functionCall.id || `call_${Math.random().toString(36).slice(2, 10)}`,
             name: part.functionCall.name,
             args: part.functionCall.args || {},
+            thoughtSignature: part.thoughtSignature,
           };
         }
       }

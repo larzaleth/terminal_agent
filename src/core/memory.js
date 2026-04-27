@@ -103,7 +103,7 @@ async function summarizeMemory(memory, signal) {
     .map((msg) => {
       const role = msg.role || "unknown";
       const texts = (msg.blocks || [])
-        .filter((b) => b.type === "text")
+        .filter((b) => b.type === "text" || b.type === "thought")
         .map((b) => b.text)
         .join("\n");
       return texts ? `[${role}]: ${texts}` : null;

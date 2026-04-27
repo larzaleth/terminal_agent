@@ -103,6 +103,7 @@ export async function runAgent(userInput, callbacks = {}) {
     onThinking();
 
     let streamedText = "";
+    let thisTurnThoughts = "";
     const toolCalls = [];
     let usage = null;
 
@@ -122,6 +123,10 @@ export async function runAgent(userInput, callbacks = {}) {
         if (evt.type === "text") {
           streamedText += evt.text;
           onText(evt.text);
+        } else if (evt.type === "thought") {
+          // Accumulate thoughts for memory but don't print them by default
+          if (!thisTurnThoughts) thisTurnThoughts = "";
+          thisTurnThoughts += evt.text;
         } else if (evt.type === "tool_call") {
           toolCalls.push(evt);
         } else if (evt.type === "usage") {
@@ -145,9 +150,16 @@ export async function runAgent(userInput, callbacks = {}) {
 
     // Build assistant message from this turn's output.
     const blocks = [];
+    if (thisTurnThoughts) blocks.push({ type: "thought", text: thisTurnThoughts });
     if (streamedText) blocks.push({ type: "text", text: streamedText });
     for (const tc of toolCalls) {
-      blocks.push({ type: "tool_call", id: tc.id, name: tc.name, args: tc.args });
+      blocks.push({ 
+        type: "tool_call", 
+        id: tc.id, 
+        name: tc.name, 
+        args: tc.args,
+        ...(tc.thoughtSignature && { thoughtSignature: tc.thoughtSignature })
+      });
     }
     if (blocks.length === 0) break;
 

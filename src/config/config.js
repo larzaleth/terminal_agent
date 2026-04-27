@@ -118,6 +118,35 @@ export function getGlobalEnvPath() {
   return path.join(os.homedir(), GLOBAL_ENV_FILENAME);
 }
 
+/**
+ * Load variables from the global .myagent.env file into process.env.
+ */
+export function loadGlobalEnv() {
+  const envPath = getGlobalEnvPath();
+  if (!fs.existsSync(envPath)) return;
+
+  try {
+    const raw = fs.readFileSync(envPath, "utf-8");
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // Handle both "KEY=VAL" and "export KEY=VAL"
+      const match = trimmed.match(/^(?:export\s+)?([^=]+)=(.*)$/);
+      if (match) {
+        const key = match[1].trim();
+        const value = match[2].trim().replace(/^(['"])(.*)\1$/, "$2"); // unquote
+        if (!process.env[key]) {
+          process.env[key] = value;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️ Failed to load global env: ${err.message}`);
+  }
+}
+
 // Backwards-compatible named export for existing call-sites.
 // The Proxy now supports both reads AND writes — `/model` and `/provider`
 // commands mutate the session's config in-memory (not persisted to disk).

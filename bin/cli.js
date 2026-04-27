@@ -4,13 +4,14 @@ import fs from "fs";
 import chalk from "chalk";
 import ora from "ora";
 import { formatDuration, writeFileAtomicSync } from "../src/utils/utils.js";
-import { getGlobalEnvPath, loadConfig } from "../src/config/config.js";
+import { getGlobalEnvPath, loadConfig, loadGlobalEnv } from "../src/config/config.js";
 import { getProviderApiKeySpec, upsertEnvValue } from "../src/config/provider-env.js";
 import { handleSlashCommand } from "../src/commands/slash.js";
 import { runAgent } from "../src/core/agents.js";
 import { globalTracker } from "../src/llm/cost-tracker.js";
 import { shutdownMcp } from "../src/mcp/client.js";
 import { startWatcher, stopWatcher } from "../src/rag/watcher.js";
+import { log } from "../src/utils/logger.js";
 
 // ===========================
 // 🔑 API KEY SETUP
@@ -128,7 +129,10 @@ async function runReadline() {
         },
         onToolResult: () => {},
         onDone: () => spinner.stop(),
-        onError: (err) => spinner.fail(chalk.red(`Error: ${err.message}`)),
+        onError: (err) => {
+          log.error(err);
+          spinner.fail(chalk.red(`Error: ${err.message}`));
+        },
       });
 
       const duration = formatDuration(Date.now() - startTime);
@@ -137,6 +141,7 @@ async function runReadline() {
       console.log(chalk.dim(`\n⏱️  Done in ${duration}`));
       console.log(chalk.dim(`${costSummary}\n`));
     } catch (err) {
+      log.error(err);
       spinner.stop();
       console.error(chalk.red(`\n❌ Error: ${err.message}\n`));
     }
@@ -147,6 +152,7 @@ async function runReadline() {
 // 🚀 ENTRY — Hybrid TUI / Readline
 // ===========================
 async function main() {
+  loadGlobalEnv();
   const config = loadConfig();
   const { envVar } = getProviderApiKeySpec(config.provider);
   const forceTui = process.argv.includes("--tui");
@@ -171,6 +177,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  log.error("Fatal:", err);
   console.error(chalk.red(`\n❌ Fatal error: ${err.message}\n`));
   process.exit(1);
 });

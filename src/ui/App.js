@@ -11,6 +11,7 @@ import { DiffPrompt } from "./components/DiffPrompt.js";
 import { ConfirmPrompt } from "./components/ConfirmPrompt.js";
 import { Footer } from "./components/Footer.js";
 import { useTerminalSize } from "./useTerminalSize.js";
+import { log } from "../utils/logger.js";
 
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
@@ -403,11 +404,13 @@ export function App() {
           },
           onDone: () => {},
           onError: (err) => {
+            log.error(err);
             flushTextBuffer();
             dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
           },
         });
       } catch (err) {
+        log.error(err);
         flushTextBuffer();
         dispatch({ type: "append_text", text: `\n❌ ${err.message}\n` });
       } finally {

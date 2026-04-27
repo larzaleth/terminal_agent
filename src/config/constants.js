@@ -6,6 +6,7 @@ export const MEMORY_FILE = "memory.json";
 export const CACHE_DIR = ".agent_cache";
 export const COST_REPORT_FILE = "cost-report.json";
 export const GLOBAL_ENV_FILENAME = ".myagent.env";
+export const ERROR_LOG_FILE = "error.log";
 
 // ===========================
 // 🔹 DEFAULTS
