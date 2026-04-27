@@ -4,7 +4,6 @@ import { Box, useApp, useInput } from "ink";
 import { h } from "./h.js";
 
 import { Header } from "./components/Header.js";
-import { Sidebar } from "./components/Sidebar.js";
 import { MessageList } from "./components/MessageList.js";
 import { InputBox } from "./components/InputBox.js";
 import { DiffPrompt } from "./components/DiffPrompt.js";
@@ -64,10 +63,7 @@ export function App() {
     }, 60);
   }, [flushTextBuffer]);
 
-  // ── Layout math ────────────────────────────────────────────────────
-  const sidebarWidth = columns >= 110 ? 32 : columns >= 90 ? 28 : 0;
-  const showSidebar = sidebarWidth > 0;
-  const chromeRows = state.prompt?.kind === "edit" ? 20 : 7;
+  const chromeRows = state.prompt ? (state.prompt.kind === "edit" ? 15 : 6) : 4;
   const chatMaxRows = Math.max(6, rows - chromeRows);
 
   // ── Prompter registration ──────────────────────────────────────────
@@ -96,83 +92,10 @@ export function App() {
     return () => clearToolStreamCallback();
   }, []);
 
-  // ── Mouse wheel → scroll; click → focus tool; drag → select for copy ──
+  // Mouse tracking disabled for stability.
   useEffect(() => {
-    const chatTopY = 4;
-    let dragStartY = null;
-
-    setMouseCallback((event) => {
-      if (event.type === "wheel") {
-        if (event.direction === "up") dispatch({ type: "scroll", delta: 2 });
-        else if (event.direction === "down") dispatch({ type: "scroll", delta: -2 });
-        return;
-      }
-
-      if (event.type === "click" && event.button === "left") {
-        if (event.press) {
-          // Start tracking a potential drag.
-          dragStartY = event.y - chatTopY;
-          return;
-        }
-        // Release: either a click (no drag) or a drag completion.
-        const startRelY = dragStartY;
-        const endRelY = event.y - chatTopY;
-        dragStartY = null;
-
-        if (state.prompt) return;
-
-        const didDrag =
-          typeof startRelY === "number" &&
-          typeof endRelY === "number" &&
-          Math.abs(endRelY - startRelY) >= 1;
-
-        if (didDrag) {
-          // Copy selected rows.
-          const text = extractTextInRange(
-            Math.min(startRelY, endRelY),
-            Math.max(startRelY, endRelY)
-          );
-          dispatch({ type: "clear_selection" });
-          if (text.trim()) {
-            const ok = writeClipboard(text);
-            dispatch({
-              type: "set_toast",
-              text: ok
-                ? `📋 Copied ${text.length} chars to clipboard`
-                : "⚠️ Clipboard unsupported — enable OSC 52 in your terminal",
-              color: ok ? "green" : "yellow",
-            });
-          }
-          return;
-        }
-
-        // Plain click — focus + toggle tool block.
-        const relY = endRelY;
-        if (relY < 0) return;
-        const toolId = findToolAt(relY);
-        if (!toolId || !state.pending) return;
-        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
-        const idx = toolBlocks.findIndex((b) => b.id === toolId);
-        if (idx >= 0) {
-          dispatch({ type: "focus_tool", delta: idx - state.focusedToolIdx });
-        }
-        dispatch({ type: "toggle_tool_expanded", id: toolId });
-        return;
-      }
-
-      if (event.type === "drag" && event.button === "left") {
-        if (dragStartY === null) dragStartY = event.y - chatTopY;
-        dispatch({
-          type: "set_selection",
-          selection: {
-            startY: Math.min(dragStartY, event.y - chatTopY),
-            endY: Math.max(dragStartY, event.y - chatTopY),
-          },
-        });
-      }
-    });
-    return () => clearMouseCallback();
-  }, [state.pending, state.prompt, state.focusedToolIdx]);
+    return () => {};
+  }, []);
 
   // ── Live cost polling ──────────────────────────────────────────────
   useEffect(() => {
@@ -206,74 +129,48 @@ export function App() {
   }, [state.toast]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────
+  const lastCtrlC = useRef(0);
   useInput(async (input, key) => {
-    // Ctrl+C always exits
+    // Ctrl+C: Double-tap to force kill, single tap to shutdown gracefully
     if (key.ctrl && input === "c") {
+      const now = Date.now();
+      if (now - lastCtrlC.current < 500) {
+        process.exit(0); // Emergency exit
+      }
+      lastCtrlC.current = now;
       await shutdownMcp().catch(() => {});
       exit();
       return;
     }
 
-    // Esc: cancel the active turn (or dismiss prompt which handles itself)
+    // Ctrl+R: Force Reset UI to Idle (Emergency escape if stuck)
+    if (key.ctrl && input === "r") {
+      if (abortController) abortController.abort();
+      dispatch({ type: "commit_turn" });
+      dispatch({ type: "set_toast", text: "🔄 UI Force Reset", color: "yellow" });
+      return;
+    }
+
+    // Esc: cancel the active turn
     if (key.escape && !state.prompt) {
       if (abortController) {
         abortController.abort();
-        dispatch({ type: "set_status_message", message: "Cancelling — finishing current step…" });
+        dispatch({ type: "set_status_message", message: "Cancelling..." });
       }
       return;
     }
 
     if (state.prompt) return;
 
-    // Scrolling through chat history — always available
-    if (key.pageUp) {
-      dispatch({ type: "scroll", delta: 3 });
-      return;
-    }
-    if (key.pageDown) {
-      dispatch({ type: "scroll", delta: -3 });
-      return;
-    }
-    if (input === "G" && !key.ctrl) {
-      // vim-ish: G jumps to bottom
-      dispatch({ type: "scroll_reset" });
-      return;
-    }
-
     if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
 
-    // 'y' (yank) — copy the most useful text depending on current context.
-    if (input === "y" && !key.ctrl && !key.meta) {
-      const text =
-        extractFocusedTool(state) ||
-        extractLastAssistant(state) ||
-        extractCurrentTurn(state);
-      if (text) {
-        const ok = writeClipboard(text);
-        dispatch({
-          type: "set_toast",
-          text: ok
-            ? `📋 Yanked ${text.length} chars`
-            : "⚠️ Clipboard unsupported",
-          color: ok ? "green" : "yellow",
-        });
-      }
-      return;
-    }
-
-    // Tool focus/expand — only when not scrolled up (avoids overloading arrows)
-    if (state.scrollOffset === 0) {
-      if (key.upArrow) dispatch({ type: "focus_tool", delta: -1 });
-      if (key.downArrow) dispatch({ type: "focus_tool", delta: 1 });
-      if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
-        const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
-        const target = toolBlocks[state.focusedToolIdx];
-        if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
-      }
-    } else {
-      // While scrolled up, arrows also scroll
-      if (key.upArrow) dispatch({ type: "scroll", delta: 1 });
-      if (key.downArrow) dispatch({ type: "scroll", delta: -1 });
+    // Tool focus/expand
+    if (key.rightArrow) dispatch({ type: "focus_tool", delta: 1 });
+    if (key.leftArrow) dispatch({ type: "focus_tool", delta: -1 });
+    if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
+      const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
+      const target = toolBlocks[state.focusedToolIdx];
+      if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
     }
   });
 
@@ -461,47 +358,20 @@ export function App() {
       maxIterations: state.maxIterations,
     }),
 
-    // Body — chat pane + optional sidebar
+    // Body — simple vertical list
     h(
       Box,
-      { flexDirection: "row", flexGrow: 1, overflow: "hidden" },
-      h(
-        Box,
-        {
-          flexDirection: "column",
-          flexGrow: 1,
-          paddingX: 1,
-          borderStyle: "round",
-          borderColor: "gray",
-          overflow: "hidden",
-        },
-        h(MessageList, {
-          finalized: state.finalized,
-          pending: state.pending,
-          focusedToolId,
-          maxRows: chatMaxRows,
-          scrollOffset: state.scrollOffset,
-        })
-      ),
-      showSidebar
-        ? h(
-            Box,
-            { width: sidebarWidth, flexShrink: 0 },
-            h(Sidebar, {
-              provider: config.provider || "gemini",
-              model: config.model,
-              status: state.status,
-              currentTool: state.currentTool,
-              recentTools: state.recentTools,
-              cost: state.cost,
-              tokens: state.tokens,
-              cacheHitRate: state.cacheHitRate,
-              mcpServers,
-              turnHistory: state.turnHistory,
-              statsExpanded: state.statsExpanded,
-            })
-          )
-        : null
+      {
+        flexDirection: "column",
+        flexGrow: 1,
+        paddingX: 1,
+        overflow: "hidden",
+      },
+      h(MessageList, {
+        finalized: state.finalized,
+        pending: state.pending,
+        focusedToolId,
+      })
     ),
 
     // Input / prompt region

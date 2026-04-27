@@ -110,9 +110,11 @@ export function listMcpStatus() {
 }
 
 export async function shutdownMcp() {
+  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms));
   for (const [name, client] of _clients) {
     try {
-      await client.close();
+      // Don't let a single stuck MCP server block the whole app from exiting
+      await Promise.race([client.close(), timeout(1000)]);
       console.log(`🔌 MCP disconnected: ${name}`);
     } catch {
       /* best-effort */

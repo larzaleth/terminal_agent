@@ -19,22 +19,21 @@ export function DiffPrompt({ filePath, oldContent, newContent, onResolve }) {
   });
 
   // Split diff into lines & trim to terminal height minus UI chrome.
-  const lines = diffText.split("\n").slice(0, 25);
+  // Limit diff height to keep UI stable
+  const lines = diffText.split("\n").slice(0, 10);
 
   return h(
     Box,
-    { flexDirection: "column", paddingX: 1, borderStyle: "double", borderColor: "yellow" },
-    h(Text, { bold: true, color: "yellow" }, `✏️  Proposed edit: ${filePath}`),
-    h(Text, { color: "gray" }, `   +${added} / -${removed} lines`),
-    h(Box, { marginTop: 1, flexDirection: "column" }, ...lines.map((l, i) => h(Text, { key: i }, l))),
+    { flexDirection: "column", paddingX: 1, backgroundColor: "yellow" },
+    h(Text, { bold: true, color: "black" }, `PROPOSED EDIT: ${filePath}`),
+    h(Text, { color: "black", dimColor: true }, `+${added} / -${removed} lines`),
+    h(Box, { flexDirection: "column", marginTop: 0 }, ...lines.map((l, i) => h(Text, { key: i, color: "black" }, l))),
     h(
       Box,
-      { marginTop: 1 },
-      h(Text, { color: "green", bold: true }, "[a] approve"),
-      h(Text, { color: "gray" }, "   "),
-      h(Text, { color: "red", bold: true }, "[r] reject"),
-      h(Text, { color: "gray" }, "   "),
-      h(Text, { color: "cyan", bold: true }, "[e] edit manually")
+      { gap: 2 },
+      h(Text, { color: "black", bold: true }, "[a] APPROVE"),
+      h(Text, { color: "black", bold: true }, "[r] REJECT"),
+      h(Text, { color: "black", bold: true }, "[e] MANUAL")
     )
   );
 }

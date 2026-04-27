@@ -6,29 +6,17 @@ import { setToolRegions, setBlockRegions } from "../clickRegistry.js";
 
 /**
  * Bounded + scrollable message list.
- *
- *  scrollOffset = 0  → newest messages at the bottom (default)
- *  scrollOffset > 0  → shift the visible window backward by that many "rows"
- *                      so the user can read older history.
- *
- * Older messages are preserved in memory.json and exportable via /save.
+ * Simplified Message List.
+ * Shows last N messages to keep performance high and avoid complex layout math.
  */
-export function MessageList({ finalized, pending, focusedToolId, maxRows, scrollOffset = 0 }) {
+export function MessageList({ finalized, pending, focusedToolId }) {
   const all = pending ? [...finalized, pending] : finalized;
 
-  const hasMessages = all.length > 0;
-  const { visible, hiddenAbove, hiddenBelow } = hasMessages
-    ? windowWithOffset(all, maxRows, scrollOffset)
-    : { visible: [], hiddenAbove: 0, hiddenBelow: 0 };
-  const regions = hasMessages ? computeToolRegions(visible, hiddenAbove > 0) : [];
-  const blockRegions = hasMessages ? computeBlockRegions(visible, hiddenAbove > 0) : [];
+  // Just show the last 10 messages for maximum stability/performance.
+  // User can /save to see full history.
+  const visible = all.slice(-10);
 
-  useEffect(() => {
-    setToolRegions(regions);
-    setBlockRegions(blockRegions);
-  });
-
-  if (!hasMessages) {
+  if (all.length === 0) {
     return h(
       Box,
       { paddingX: 1, paddingY: 1 },
@@ -43,147 +31,18 @@ export function MessageList({ finalized, pending, focusedToolId, maxRows, scroll
   return h(
     Box,
     { flexDirection: "column" },
-    hiddenAbove > 0
-      ? h(
-          Box,
-          { paddingX: 1 },
-          h(
-            Text,
-            { color: "gray", italic: true },
-            `↑ ${hiddenAbove} earlier ${hiddenAbove === 1 ? "message" : "messages"} — PgUp to scroll, /save to export full transcript`
-          )
+    all.length > 10 &&
+      h(
+        Box,
+        { paddingX: 1 },
+        h(
+          Text,
+          { color: "gray", dimColor: true },
+          `... ${all.length - 10} older messages hidden (use /save to export)`
         )
-      : null,
+      ),
     ...visible.map((msg) =>
       h(Message, { key: msg.id, message: msg, focusedToolId })
-    ),
-    hiddenBelow > 0
-      ? h(
-          Box,
-          { paddingX: 1 },
-          h(
-            Text,
-            { color: "magenta", italic: true },
-            `↓ ${hiddenBelow} newer ${hiddenBelow === 1 ? "message" : "messages"} — PgDn / G to return to bottom`
-          )
-        )
-      : null
+    )
   );
 }
-
-// ─── Heuristic: roughly how many rows does a message occupy? ─────────
-function estimateBlockRows(b) {
-  if (b.type === "text") {
-    const text = b.text || "";
-    // Split by newlines, then wrap long lines at ~90 chars.
-    const lines = text.split("\n");
-    return lines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 90)), 0);
-  }
-  if (b.type === "plan") return (b.steps || []).length + 1;
-  if (b.type === "tool_call") {
-    if (b.expanded) {
-      const argLines = b.args ? JSON.stringify(b.args, null, 2).split("\n").length : 1;
-      const resLines =
-        typeof b.result === "string" ? Math.min(12, b.result.split("\n").length) : 1;
-      // border-top + header + "args:" + argLines + "result:" + resLines + border-bot
-      return 5 + argLines + resLines;
-    }
-    return 1;
-  }
-  return 1;
-}
-
-function estimateRows(msg) {
-  let rows = 1; // role header
-  for (const b of msg.blocks || []) rows += estimateBlockRows(b);
-  return rows + 1; // marginBottom
-}
-
-// Compute [{toolId, startY, endY}] in chat-pane-relative rows.
-function computeToolRegions(visible, hasHeader) {
-  const regions = [];
-  let y = 0;
-  if (hasHeader) y += 1; // "↑ N earlier messages" line
-  for (const msg of visible) {
-    y += 1; // role header
-    for (const b of msg.blocks || []) {
-      const rows = estimateBlockRows(b);
-      if (b.type === "tool_call") {
-        regions.push({ toolId: b.id, startY: y, endY: y + rows - 1 });
-      }
-      y += rows;
-    }
-    y += 1; // marginBottom
-  }
-  return regions;
-}
-
-// Compute [{startY, endY, text}] for every block so drag-select can extract
-// raw text across arbitrary Y ranges.
-function computeBlockRegions(visible, hasHeader) {
-  const regions = [];
-  let y = 0;
-  if (hasHeader) y += 1;
-  for (const msg of visible) {
-    const rolePrefix = msg.role === "user" ? "🧑 You" : msg.role === "assistant" ? "🤖 Assistant" : msg.role;
-    regions.push({ startY: y, endY: y, text: rolePrefix });
-    y += 1;
-    for (const b of msg.blocks || []) {
-      const rows = estimateBlockRows(b);
-      regions.push({ startY: y, endY: y + rows - 1, text: blockToText(b) });
-      y += rows;
-    }
-    y += 1;
-  }
-  return regions;
-}
-
-function blockToText(b) {
-  if (!b) return "";
-  if (b.type === "text") return b.text || "";
-  if (b.type === "plan") {
-    return (b.steps || []).map((s, i) => `${i + 1}. ${s.step}`).join("\n");
-  }
-  if (b.type === "tool_call") {
-    const args = b.args ? JSON.stringify(b.args) : "";
-    const result = typeof b.result === "string" ? b.result : "";
-    const header = `[${b.tool}] ${args}`;
-    return result ? `${header}\n${result}` : header;
-  }
-  return "";
-}
-
-function windowWithOffset(all, maxRows, scrollOffset) {
-  const budget = maxRows && maxRows > 0 ? maxRows : Infinity;
-
-  // Pick last-N messages that fit, shifted by scrollOffset "row units".
-  // Each scroll tick ≈ 1 message-row of offset.
-  const picked = [];
-  let total = 0;
-  let skipped = 0;
-
-  for (let i = all.length - 1; i >= 0; i--) {
-    const rows = estimateRows(all[i]);
-
-    if (skipped < scrollOffset) {
-      // Skip newer messages until we exhaust the offset.
-      skipped += rows;
-      continue;
-    }
-
-    if (total + rows > budget && picked.length > 0) break;
-    picked.unshift(all[i]);
-    total += rows;
-  }
-
-  const firstIdx = picked.length > 0 ? all.indexOf(picked[0]) : all.length;
-  const lastIdx = picked.length > 0 ? all.indexOf(picked[picked.length - 1]) : -1;
-  return {
-    visible: picked,
-    hiddenAbove: firstIdx,
-    hiddenBelow: all.length - 1 - lastIdx,
-  };
-}
-
-// Exported for unit tests.
-export { computeToolRegions, computeBlockRegions, estimateRows };

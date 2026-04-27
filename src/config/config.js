@@ -14,8 +14,8 @@ import {
 const defaultConfig = {
   provider: "gemini",
   model: "gemini-3-flash-preview",
-  plannerModel: "gemini-3.1-preview",
-  summaryModel: "gemini-3-flash-lite-preview",
+  plannerModel: "gemini-3-flash-preview",
+  summaryModel: "gemini-2.5-flash-lite",
   maxIterations: MAX_ITERATIONS_DEFAULT,
   maxMemoryTurns: MAX_MEMORY_TURNS_DEFAULT,
   mcpServers: {},

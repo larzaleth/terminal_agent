@@ -32,9 +32,11 @@ export class GeminiProvider {
       const role = m.role === "assistant" ? "model" : "user";
       const parts = [];
       for (const b of m.blocks) {
-        if (b.type === "text") parts.push({ text: b.text });
-        else if (b.type === "thought") parts.push({ thought: b.text });
-        else if (b.type === "tool_call") {
+        if (b.type === "text" || b.type === "thought") {
+          // Send thoughts back as plain text to avoid "Unsupported input part type"
+          // while preserving context.
+          parts.push({ text: b.text });
+        } else if (b.type === "tool_call") {
           const callObj = { functionCall: { name: b.name, args: b.args || {} } };
           if (b.thoughtSignature) callObj.thoughtSignature = b.thoughtSignature;
           parts.push(callObj);
@@ -74,7 +76,9 @@ export class GeminiProvider {
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part.thought) {
-          yield { type: "thought", text: part.thought };
+          // If it's a thought part, it usually also has the text in part.text
+          yield { type: "thought", text: part.text || "" };
+          continue; // Don't yield it twice if it has both
         }
         if (part.text) {
           yield { type: "text", text: part.text };

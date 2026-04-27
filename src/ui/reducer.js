@@ -164,15 +164,6 @@ export function reducer(state, action) {
     }
     case "set_status_message":
       return { ...state, statusMessage: action.message };
-    case "scroll": {
-      const total = state.finalized.length + (state.pending ? 1 : 0);
-      let next = state.scrollOffset + action.delta;
-      if (next < 0) next = 0;
-      if (next > Math.max(0, total - 1)) next = Math.max(0, total - 1);
-      return { ...state, scrollOffset: next };
-    }
-    case "scroll_reset":
-      return { ...state, scrollOffset: 0 };
     case "set_prompt":
       return {
         ...state,
@@ -204,10 +195,6 @@ export function reducer(state, action) {
       };
     case "toggle_stats":
       return { ...state, statsExpanded: !state.statsExpanded };
-    case "set_selection":
-      return { ...state, selection: action.selection };
-    case "clear_selection":
-      return { ...state, selection: null };
     case "set_toast":
       return { ...state, toast: { text: action.text, color: action.color || "cyan", ts: Date.now() } };
     case "clear_toast":

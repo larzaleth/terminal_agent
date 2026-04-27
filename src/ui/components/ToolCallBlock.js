@@ -29,27 +29,26 @@ function argsSummary(args) {
 }
 
 export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded, focused }) {
-  const icon = TOOL_ICON[tool] || "󱗼";
   const isRunning = status === "running";
   const isError = status === "error";
+  const statusMarker = isRunning ? "⟳" : isError ? "!" : "✓";
   const statusColor = isRunning ? "yellow" : isError ? "red" : "green";
-  
+
   const header = h(
     Box,
     { gap: 1 },
-    h(Text, { color: statusColor }, isRunning ? h(Spinner, { type: "dots" }) : isError ? "" : ""),
-    h(Text, { color: statusColor }, icon),
-    h(Text, { bold: true, color: focused ? "cyan" : "white" }, tool.toUpperCase()),
-    !expanded && h(Text, { color: "gray", dimColor: true }, `(${argsSummary(args)})`)
+    h(Text, { color: statusColor, bold: true }, statusMarker),
+    h(Text, { color: focused ? "cyanBright" : "white", bold: true }, tool),
+    !expanded && h(Text, { color: "gray" }, `(${argsSummary(args)})`)
   );
 
-  if (!expanded) return h(Box, { flexDirection: "column", marginLeft: 2, marginY: 0 }, header);
+  if (!expanded) return h(Box, { flexDirection: "column", marginLeft: 2 }, header);
 
   const resultText = isRunning
-    ? (liveOutput && liveOutput.trim() ? liveOutput : "Executing...")
+    ? (liveOutput && liveOutput.trim() ? liveOutput : "Working...")
     : typeof result === "string"
-      ? result.length > 1200
-        ? result.slice(0, 1200) + "\n…(truncated)"
+      ? result.length > 800
+        ? result.slice(0, 800) + "\n... (truncated)"
         : result
       : JSON.stringify(result || "", null, 2);
 
@@ -58,22 +57,16 @@ export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded
     {
       flexDirection: "column",
       marginLeft: 2,
-      paddingX: 1,
-      borderStyle: "single",
-      borderColor: focused ? "cyan" : "gray",
-      paddingY: 0,
       marginBottom: 1,
     },
     header,
     h(
       Box,
       { flexDirection: "column", marginLeft: 2, marginTop: 1 },
-      h(Text, { color: "blue", dimColor: true, bold: true }, "INPUT"),
-      h(Text, { color: "gray" }, JSON.stringify(args, null, 2)),
-      h(Box, { marginTop: 1 }),
-      h(Text, { color: "blue", dimColor: true, bold: true }, "OUTPUT"),
+      h(Text, { color: "blue", dimColor: true }, "Args: " + JSON.stringify(args)),
+      h(Box, { marginTop: 0 }),
       ...resultText.split("\n").map((line, i) =>
-        h(Text, { key: `r${i}`, color: isError ? "red" : "white" }, line)
+        h(Text, { key: `r${i}`, color: isError ? "red" : "gray" }, "> " + line)
       )
     )
   );

@@ -9,16 +9,15 @@ export function ConfirmPrompt({ message, reason, onResolve }) {
 
   return h(
     Box,
-    { flexDirection: "column", paddingX: 1, borderStyle: "double", borderColor: "yellow" },
-    h(Text, { bold: true, color: "yellow" }, "⚠️  Confirmation required"),
-    reason ? h(Text, { color: "gray" }, `   (${reason})`) : null,
-    h(Box, { marginTop: 1 }, h(Text, { color: "white" }, message)),
+    { flexDirection: "column", paddingX: 1, backgroundColor: "yellow" },
+    h(Text, { bold: true, color: "black" }, "CONFIRMATION REQUIRED"),
+    reason ? h(Text, { color: "black", dimColor: true }, `(${reason})`) : null,
+    h(Box, { marginTop: 0 }, h(Text, { color: "black" }, message)),
     h(
       Box,
-      { marginTop: 1 },
-      h(Text, { color: "green", bold: true }, "[y/Enter] allow"),
-      h(Text, { color: "gray" }, "   "),
-      h(Text, { color: "red", bold: true }, "[n/Esc] deny")
+      { gap: 2 },
+      h(Text, { color: "black", bold: true }, "[y] ALLOW"),
+      h(Text, { color: "black", bold: true }, "[n] DENY")
     )
   );
 }
