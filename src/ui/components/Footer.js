@@ -11,100 +11,44 @@ function formatElapsed(ms) {
   return `${m}m${rem.toString().padStart(2, "0")}s`;
 }
 
-function getHints(status, canCancel, scrollOffset) {
-  if (scrollOffset > 0) {
-    return [
-      { key: "PgUp/PgDn", label: "scroll" },
-      { key: "G / End", label: "jump to bottom" },
-      { key: "y", label: "yank" },
-      { key: "Ctrl+C", label: "exit" },
-    ];
-  }
-  switch (status) {
-    case "awaiting_edit":
-      return [
-        { key: "a/Enter", label: "approve" },
-        { key: "r/Esc", label: "reject" },
-        { key: "e", label: "edit manually" },
-      ];
-    case "awaiting_confirm":
-      return [
-        { key: "y/Enter", label: "allow" },
-        { key: "n/Esc", label: "deny" },
-      ];
-    case "thinking":
-    case "tool_running":
-      return [
-        ...(canCancel ? [{ key: "Esc", label: "cancel" }] : []),
-        { key: "PgUp", label: "scroll history" },
-        { key: "Ctrl+C", label: "exit" },
-      ];
-    default:
-      return [
-        { key: "Enter", label: "send" },
-        { key: "↑/↓", label: "focus tool" },
-        { key: "y", label: "yank" },
-        { key: "drag", label: "select" },
-        { key: "/help", label: "commands" },
-      ];
-  }
+function statusLabel(status) {
+  if (status === "thinking") return "THINKING";
+  if (status === "writing") return "WRITING";
+  if (status === "tool_running") return "RUNNING TOOL";
+  if (status === "awaiting_edit") return "AWAITING APPROVAL";
+  if (status === "awaiting_confirm") return "AWAITING CONFIRMATION";
+  return "";
 }
 
-export function Footer({ status, message, elapsedMs = 0, canCancel = false, scrollOffset = 0, toast = null, selection = null }) {
-  const hints = getHints(status, canCancel, scrollOffset);
-  const isWorking = status === "thinking" || status === "tool_running";
+export function Footer({ status, message, elapsedMs = 0, canCancel = false, toast = null, model = "", cost = 0 }) {
+  const isWorking = status === "thinking" || status === "writing" || status === "tool_running";
   const elapsedStr = isWorking ? formatElapsed(elapsedMs) : "";
+  const costStr = `$${Number(cost || 0).toFixed(4)}`;
 
-  // Toast takes priority — shows clipboard / error feedback for a few seconds.
   if (toast) {
-    return h(
-      Box,
-      { paddingX: 1 },
-      h(Text, { color: toast.color || "cyan", bold: true }, toast.text)
-    );
-  }
-
-  // Active drag selection — show live row count.
-  if (selection) {
-    const rows = Math.abs(selection.endY - selection.startY) + 1;
-    return h(
-      Box,
-      { paddingX: 1 },
-      h(Text, { color: "magenta", bold: true }, `📐 Selecting ${rows} row${rows === 1 ? "" : "s"} — release to copy`)
-    );
+    return h(Box, { paddingX: 1, marginBottom: 1 }, h(Text, { color: toast.color || "cyan", bold: true }, `★ ${toast.text}`));
   }
 
   return h(
     Box,
-    { paddingX: 1, justifyContent: "space-between" },
+    { paddingX: 1, justifyContent: "space-between", marginBottom: 1 },
+    // Left: model + cost
     h(
       Box,
-      null,
-      ...hints.flatMap((hint, i) => [
-        h(Text, { key: `k${i}`, color: "cyan", bold: true }, hint.key),
-        h(
-          Text,
-          { key: `l${i}`, color: "gray" },
-          ` ${hint.label}${i < hints.length - 1 ? "  " : ""}`
-        ),
-      ])
+      {},
+      h(Text, { color: "cyan", bold: true }, model),
+      h(Text, { color: "gray" }, ` [${costStr}]`)
     ),
+    // Right: status indicator
     isWorking
       ? h(
           Box,
-          null,
-          h(Text, { color: "yellow" }, h(Spinner, { type: "dots" })),
-          h(
-            Text,
-            { color: elapsedMs > 30_000 ? "red" : "yellow" },
-            ` ${status === "tool_running" ? "running" : "thinking"} ${elapsedStr}`
-          ),
-          message ? h(Text, { color: "gray" }, ` — ${message}`) : null
+          {},
+          h(Text, { color: "yellow", bold: true }, `● ${statusLabel(status)} `),
+          h(Text, { color: "gray" }, elapsedStr)
         )
-      : scrollOffset > 0
-        ? h(Text, { color: "magenta", italic: true }, `📜 scrolled up ${scrollOffset} row-units`)
-        : message
-          ? h(Text, { color: "gray", italic: true }, message)
-          : null
+      : message
+        ? h(Text, { color: "gray" }, message)
+        : h(Text, { color: "gray" }, "PageUp/Dn: scroll  Ctrl+C: exit")
   );
 }

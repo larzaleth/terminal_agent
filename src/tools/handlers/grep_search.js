@@ -8,7 +8,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ pattern, dir = ".", include, isRegex = false }) {
   try {
-    console.log(`\n🔍 [grep_search] "${pattern}" in ${dir}`);
     if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
     if (!pattern) return "❌ Error: Search pattern cannot be empty.";
     if (!(await exists(dir))) return `❌ Error: Directory '${dir}' not found.`;

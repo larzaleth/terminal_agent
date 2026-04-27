@@ -4,7 +4,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ dir }) {
   try {
-    console.log(`\n📂 [list_dir] ${dir}`);
     if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
     if (!(await exists(dir))) return `❌ Error: Directory not found at '${dir}'.`;
 

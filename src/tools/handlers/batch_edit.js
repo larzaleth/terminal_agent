@@ -12,8 +12,6 @@ export default async function ({ edits }) {
     return "❌ Error: 'edits' must be a non-empty array of objects { path, target, replacement }.";
   }
 
-  console.log(`\n📦 [batch_edit] Processing ${edits.length} edits...`);
-
   // Group edits by file
   const fileEdits = new Map();
   for (const edit of edits) {

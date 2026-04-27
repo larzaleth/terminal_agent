@@ -15,8 +15,11 @@ export function renderDiff(oldText, newText, filePath = "", opts = {}) {
   const parts = diffLines(oldText, newText);
 
   let out = "";
-  out += chalk.bold.red(`--- ${filePath} (before)\n`);
-  out += chalk.bold.green(`+++ ${filePath} (after)\n`);
+  const line = "─".repeat(Math.min(process.stdout.columns || 80, 80));
+  
+  out += chalk.cyan.bold(`\n${line}\n`);
+  out += chalk.cyan.bold(` 📝 DIFF: ${filePath}\n`);
+  out += chalk.cyan.bold(`${line}\n`);
 
   for (let p = 0; p < parts.length; p++) {
     const part = parts[p];
@@ -28,7 +31,6 @@ export function renderDiff(oldText, newText, filePath = "", opts = {}) {
     } else if (part.removed) {
       for (const l of lines) out += chalk.red(`- ${l}\n`);
     } else {
-      // Trim context: keep first/last N lines, show "..." for rest.
       if (lines.length <= contextLines * 2) {
         for (const l of lines) out += chalk.dim(`  ${l}\n`);
       } else {
@@ -37,12 +39,13 @@ export function renderDiff(oldText, newText, filePath = "", opts = {}) {
         const head = isFirst ? [] : lines.slice(0, contextLines);
         const tail = isLast ? [] : lines.slice(-contextLines);
         for (const l of head) out += chalk.dim(`  ${l}\n`);
-        out += chalk.dim.italic(`  ... (${lines.length - head.length - tail.length} unchanged lines)\n`);
+        out += chalk.dim.italic(`  ... (${lines.length - head.length - tail.length} lines)\n`);
         for (const l of tail) out += chalk.dim(`  ${l}\n`);
       }
     }
   }
 
+  out += chalk.cyan.bold(`${line}\n`);
   return out;
 }
 

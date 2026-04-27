@@ -67,12 +67,11 @@ export function runWithSpawn(cmd) {
         );
       }
       if (code === 0) {
-        const stdoutOut =
-          stdoutDropped > 0
-            ? `[showing last ${stdoutBuf.length} chars, ${stdoutDropped} earlier chars omitted]\n${stdoutBuf}`
-            : stdoutBuf;
-        const out =
-          stdoutBuf.trim() === "" ? "(no output)" : truncate(stdoutOut, MAX_COMMAND_OUTPUT_CHARS);
+        let combined = "";
+        if (stdoutBuf.trim()) combined += stdoutBuf;
+        if (stderrBuf.trim()) combined += (combined ? "\n" : "") + stderrBuf;
+        
+        const out = combined.trim() === "" ? "(no output)" : truncate(combined, MAX_COMMAND_OUTPUT_CHARS);
         return resolve(`✅ Success (exit 0):\n${out}`);
       }
       

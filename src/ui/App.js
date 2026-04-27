@@ -1,10 +1,11 @@
 import { useState, useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 
-import { Box, useApp, useInput } from "ink";
+import { Box, useApp, useInput, Static, Text } from "ink";
 import { h } from "./h.js";
 
 import { Header } from "./components/Header.js";
 import { MessageList } from "./components/MessageList.js";
+import { MessageItem } from "./components/MessageItem.js";
 import { InputBox } from "./components/InputBox.js";
 import { DiffPrompt } from "./components/DiffPrompt.js";
 import { ConfirmPrompt } from "./components/ConfirmPrompt.js";
@@ -60,11 +61,12 @@ export function App() {
     textFlushTimerRef.current = setTimeout(() => {
       textFlushTimerRef.current = null;
       flushTextBuffer();
-    }, 60);
+    }, 150);
   }, [flushTextBuffer]);
 
-  const chromeRows = state.prompt ? (state.prompt.kind === "edit" ? 15 : 6) : 4;
-  const chatMaxRows = Math.max(6, rows - chromeRows);
+  // Truncate logic removed to allow full flow.
+  const chromeRows = state.prompt ? (state.prompt.kind === "edit" ? 15 : 8) : 5;
+  const chatMaxRows = Math.max(5, rows - chromeRows);
 
   // ── Prompter registration ──────────────────────────────────────────
   useEffect(() => {
@@ -84,17 +86,49 @@ export function App() {
     return () => resetPrompter();
   }, []);
 
+  // Coalesce tool stream chunks to prevent TUI flickering on rapid output
+  const toolBufferRef = useRef({ name: "", chunk: "" });
+  const toolFlushTimerRef = useRef(null);
+
+  const flushToolBuffer = useCallback(() => {
+    if (toolFlushTimerRef.current) {
+      clearTimeout(toolFlushTimerRef.current);
+      toolFlushTimerRef.current = null;
+    }
+    const { name, chunk } = toolBufferRef.current;
+    if (chunk) {
+      toolBufferRef.current = { name: "", chunk: "" };
+      dispatch({ type: "tool_stream_chunk", name, chunk });
+    }
+  }, []);
+
+  const scheduleToolFlush = useCallback(() => {
+    if (toolFlushTimerRef.current) return;
+    toolFlushTimerRef.current = setTimeout(() => {
+      toolFlushTimerRef.current = null;
+      flushToolBuffer();
+    }, 150);
+  }, [flushToolBuffer]);
+
   // ── Tool live-stream wiring: forward stdout/stderr chunks to the reducer ──
   useEffect(() => {
     setToolStreamCallback((name, chunk) => {
-      dispatch({ type: "tool_stream_chunk", name, chunk });
+      toolBufferRef.current.name = name;
+      toolBufferRef.current.chunk += chunk;
+      scheduleToolFlush();
     });
-    return () => clearToolStreamCallback();
-  }, []);
+    return () => {
+      clearToolStreamCallback();
+      flushToolBuffer();
+    };
+  }, [scheduleToolFlush, flushToolBuffer]);
 
-  // Mouse tracking disabled for stability.
+  // ── Keep Process Alive ─────────────────────────────────────────────
+  // Ink sometimes exits if the event loop is momentarily empty (e.g., when
+  // TextInput unmounts before async agent loops start). This prevents that.
   useEffect(() => {
-    return () => {};
+    const keepAlive = setInterval(() => {}, 100000);
+    return () => clearInterval(keepAlive);
   }, []);
 
   // ── Live cost polling ──────────────────────────────────────────────
@@ -107,7 +141,7 @@ export function App() {
         tokens: stats.usage.generation.inputTokens + stats.usage.generation.outputTokens,
         cacheHitRate: stats.cacheHitRate,
       });
-    }, 700);
+    }, 2000);
     return () => clearInterval(iv);
   }, [config.model]);
 
@@ -117,7 +151,7 @@ export function App() {
       setElapsedMs(0);
       return;
     }
-    const iv = setInterval(() => setElapsedMs(Date.now() - state.turnStartedAt), 200);
+    const iv = setInterval(() => setElapsedMs(Date.now() - state.turnStartedAt), 1000);
     return () => clearInterval(iv);
   }, [state.turnStartedAt]);
 
@@ -130,7 +164,7 @@ export function App() {
 
   // ── Global keyboard shortcuts ──────────────────────────────────────
   const lastCtrlC = useRef(0);
-  useInput(async (input, key) => {
+  useInput((input, key) => {
     // Ctrl+C: Double-tap to force kill, single tap to shutdown gracefully
     if (key.ctrl && input === "c") {
       const now = Date.now();
@@ -138,7 +172,7 @@ export function App() {
         process.exit(0); // Emergency exit
       }
       lastCtrlC.current = now;
-      await shutdownMcp().catch(() => {});
+      shutdownMcp().catch(() => {});
       exit();
       return;
     }
@@ -151,8 +185,11 @@ export function App() {
       return;
     }
 
+    // When a prompt is active, let the prompt component handle ALL input
+    if (state.prompt) return;
+
     // Esc: cancel the active turn
-    if (key.escape && !state.prompt) {
+    if (key.escape) {
       if (abortController) {
         abortController.abort();
         dispatch({ type: "set_status_message", message: "Cancelling..." });
@@ -160,25 +197,32 @@ export function App() {
       return;
     }
 
-    if (state.prompt) return;
+    if (key.ctrl && input === "l") {
+      dispatch({ type: "clear_history" });
+      return;
+    }
 
-    if (key.ctrl && input === "l") dispatch({ type: "clear_history" });
-
-    // Tool focus/expand
+    // Tool focus/expand logic
+    // ONLY intercept Enter if we are actually focusing a tool
+    const isToolFocused = state.focusedToolIdx >= 0 && state.pending;
+    
     if (key.rightArrow) dispatch({ type: "focus_tool", delta: 1 });
     if (key.leftArrow) dispatch({ type: "focus_tool", delta: -1 });
-    if ((input === " " || key.return) && state.focusedToolIdx >= 0 && state.pending) {
+    
+    if ((input === " " || key.return) && isToolFocused) {
       const toolBlocks = state.pending.blocks.filter((b) => b.type === "tool_call");
       const target = toolBlocks[state.focusedToolIdx];
       if (target) dispatch({ type: "toggle_tool_expanded", id: target.id });
     }
   });
 
+  // (scroll reset removed — no longer using scrollOffset state)
+
   // ── Submit handler ─────────────────────────────────────────────────
   const handleSubmit = useCallback(
     async (text) => {
       if (text === "exit" || text === "quit") {
-        await shutdownMcp().catch(() => {});
+        shutdownMcp().catch(() => {});
         exit();
         return;
       }
@@ -255,6 +299,8 @@ export function App() {
       }
 
       dispatch({ type: "add_user_message", text });
+      const currentConfig = loadConfig(true);
+      setConfig(currentConfig);
       dispatch({ type: "start_turn" });
 
       // Snapshot metrics so we can compute deltas at turn end.
@@ -323,6 +369,7 @@ export function App() {
           durationMs: Date.now() - turnStartMs,
         };
         dispatch({ type: "commit_turn", turnEntry });
+        globalTracker.saveTurn(config.model, turnEntry);
       }
     },
     [config, exit, abortController, scheduleTextFlush, flushTextBuffer]
@@ -347,57 +394,60 @@ export function App() {
   // ── Render ─────────────────────────────────────────────────────────
   return h(
     Box,
-    { flexDirection: "column", height: rows, width: columns },
+    { flexDirection: "column", width: columns, height: rows },
 
-    // Header
-    h(Header, {
-      provider: config.provider || "gemini",
-      model: config.model,
-      cost: state.cost,
-      iteration: state.iteration,
-      maxIterations: state.maxIterations,
-    }),
-
-    // Body — simple vertical list
+    // 1. Static History — Permanently printed to terminal scrollback.
+    // This prevents lag and allows natural terminal scrolling.
     h(
-      Box,
-      {
-        flexDirection: "column",
-        flexGrow: 1,
-        paddingX: 1,
-        overflow: "hidden",
-      },
-      h(MessageList, {
-        finalized: state.finalized,
-        pending: state.pending,
-        focusedToolId,
-      })
+      Static,
+      { items: state.finalized },
+      (msg) => h(MessageItem, { key: msg.id, msg: msg, focusedToolId: null })
     ),
 
-    // Input / prompt region
-    state.prompt
-      ? state.prompt.kind === "edit"
-        ? h(DiffPrompt, {
-            filePath: state.prompt.filePath,
-            oldContent: state.prompt.oldContent,
-            newContent: state.prompt.newContent,
-            onResolve: handlePromptResolve,
-          })
-        : h(ConfirmPrompt, {
-            message: state.prompt.message,
-            reason: state.prompt.reason,
-            onResolve: handlePromptResolve,
-          })
-      : h(InputBox, { disabled: state.status !== "idle", onSubmit: handleSubmit }),
+    // 2. Interactive Area — Current turn + Prompt + Footer
+    h(
+      Box,
+      { flexDirection: "column" },
+      state.pending && h(MessageItem, { msg: state.pending, focusedToolId, isInteractive: true }),
 
-    h(Footer, {
-      status: state.status,
-      message: state.statusMessage,
-      elapsedMs,
-      scrollOffset: state.scrollOffset,
-      canCancel: !!abortController,
-      toast: state.toast,
-      selection: state.selection,
-    })
+      // End-of-response marker — only when idle
+      state.status === "idle" && !state.pending && state.finalized.length > 0 &&
+      state.finalized[state.finalized.length - 1].role === "assistant"
+        ? h(
+            Box,
+            { paddingX: 1, marginBottom: 1 },
+            h(Text, { color: "gray", dimColor: true },
+              `--- end of response${state.finalized[state.finalized.length - 1].durationMs ? ` (${(state.finalized[state.finalized.length - 1].durationMs / 1000).toFixed(1)}s)` : ""} ---`
+            )
+          )
+        : null,
+
+      // Input or Prompt
+      state.prompt
+        ? state.prompt.kind === "edit"
+          ? h(DiffPrompt, {
+              filePath: state.prompt.filePath,
+              oldContent: state.prompt.oldContent,
+              newContent: state.prompt.newContent,
+              onResolve: handlePromptResolve,
+            })
+          : h(ConfirmPrompt, {
+              message: state.prompt.message,
+              reason: state.prompt.reason,
+              onResolve: handlePromptResolve,
+            })
+        : h(InputBox, { disabled: state.status !== "idle", onSubmit: handleSubmit }),
+
+      // Bottom bar — model info + status
+      h(Footer, {
+        status: state.status,
+        message: state.statusMessage,
+        elapsedMs,
+        canCancel: !!abortController,
+        toast: state.toast,
+        model: config.model,
+        cost: state.cost,
+      })
+    )
   );
 }

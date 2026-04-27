@@ -5,7 +5,6 @@ import { exists, confirmExecution, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath }) {
   try {
-    console.log(`\n🗑️ [delete_file] ${filePath}`);
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) return `❌ Error: File not found at '${filePath}'.`;
 

@@ -14,7 +14,7 @@ export const ERROR_LOG_FILE = "error.log";
 export const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const CACHE_MAX_ENTRIES = 5000;
 
-export const EMBEDDING_MODEL = "text-embedding-004";
+export const EMBEDDING_MODEL = "embedding-001";
 export const EMBEDDING_BATCH_SIZE = 10;
 export const EMBEDDING_CONCURRENCY = 5;
 export const TOOL_CONCURRENCY = 5;
@@ -29,7 +29,7 @@ export const RAG_THRESHOLD = 0.7;
 export const RAG_CONTEXT_MAX_CHARS = 3000;
 
 // Agent loop
-export const MAX_ITERATIONS_DEFAULT = 25;
+export const MAX_ITERATIONS_DEFAULT = 50;
 export const MAX_MEMORY_TURNS_DEFAULT = 20;
 export const MAX_MEMORY_TOKENS = 50_000; // Summarize when memory exceeds this estimated token count.
 export const MAX_TOOL_OUTPUT_CHARS = 8000;

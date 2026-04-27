@@ -4,7 +4,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ dir }) {
   try {
-    console.log(`\n📁 [create_dir] ${dir}`);
     if (!isSafePath(dir)) return UNSAFE_PATH_MSG;
     if (!dir || dir.trim() === "") return "❌ Error: Directory path cannot be empty.";
     if (await exists(dir)) return `⚠️ Directory '${dir}' already exists.`;

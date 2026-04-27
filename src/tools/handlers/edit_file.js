@@ -9,7 +9,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath, target, replacement }) {
   try {
-    console.log(`\n✏️ [edit_file] ${filePath}`);
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) {
       return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files.`;

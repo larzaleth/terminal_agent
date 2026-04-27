@@ -7,7 +7,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath, content }) {
   try {
-    console.log(`\n✍️ [write_file] ${filePath}`);
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!content) {
       return "❌ Error: Content cannot be empty.\n💡 Tip: Provide the full content to write to the file.";

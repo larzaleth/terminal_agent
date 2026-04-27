@@ -31,13 +31,17 @@ const AUTO_ALLOWED = new Set([
   "rg", "grep", "fgrep", "egrep", "diff", "sort", "uniq",
 ]);
 
-const FORCE_CONFIRM_COMMANDS = new Set(["node", "python", "python3"]);
+const FORCE_CONFIRM_COMMANDS = new Set([
+  "node", "python", "python3", "ruby", "perl", "php", "deno", "bun",
+  "npx", "flutter", "react-native", "expo", "nodemon", "pm2", "serve"
+]);
 
 // Sub-commands that turn an AUTO command into a write operation → force confirm.
 const UNSAFE_SUBCMDS = {
   git: new Set(["push", "reset", "rebase", "clean", "checkout", "restore", "rm", "commit", "merge", "revert"]),
-  npm: new Set(["publish", "unpublish"]),
-  yarn: new Set(["publish", "unpublish"]),
+  npm: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
+  yarn: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
+  pnpm: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
 };
 
 export function classifyCommand(cmd) {
@@ -71,7 +75,7 @@ export function classifyCommand(cmd) {
 
   // Secondary check: AUTO command with unsafe subcommand → confirm.
   if (UNSAFE_SUBCMDS[first]?.has(second)) {
-    return { verdict: "confirm", reason: `${first} ${second} may modify state` };
+    return { verdict: "confirm", reason: `${first} ${second} may modify state or start a process` };
   }
 
   // install / add / remove / uninstall are also stateful for package managers

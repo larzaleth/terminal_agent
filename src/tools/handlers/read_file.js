@@ -43,8 +43,6 @@ async function readFilePreview(filePath, maxChars = MAX_TOOL_OUTPUT_CHARS) {
 
 export default async function ({ path: filePath }) {
   try {
-    console.log(`\n📄 [read_file] ${filePath}`);
-
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) {
       return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use list_dir to explore available files, or grep_search to find files by name.`;

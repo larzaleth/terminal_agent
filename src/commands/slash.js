@@ -24,6 +24,8 @@ import { sessionCommand } from "./handlers/session.js";
 const HANDLERS = {
   "/help": helpCommand,
   "/clear": clearCommand,
+  "/new": clearCommand,
+  "/reset": clearCommand,
   "/index": indexCommand,
   "/config": configCommand,
   "/cache": cacheCommand,
@@ -32,11 +34,13 @@ const HANDLERS = {
   "/switch": modelCommand,
   "/provider": providerCommand,
   "/save": saveCommand,
+  "/list": () => sessionCommand(["list"]),
   "/mcp": mcpCommand,
   "/copy": copyCommand,
   "/undo": undoCommand,
   "/session": sessionCommand,
   "/resume": (args) => sessionCommand(["resume", ...args]),
+  "/load": (args) => sessionCommand(["resume", ...args]),
 };
 
 export const SLASH_COMMANDS = Object.keys(HANDLERS);

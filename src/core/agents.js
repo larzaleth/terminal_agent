@@ -91,8 +91,13 @@ export async function runAgent(userInput, callbacks = {}) {
   let isDone = false;
   let finalResponse = "";
   let iterations = 0;
-  const maxIterations = config.maxIterations || 25;
+  const maxIterations = config.maxIterations || 50;
   const toolLimit = pLimit(TOOL_CONCURRENCY);
+
+  // Loop detection: track tool call signatures to catch repetitive behavior
+  const seenToolCalls = new Map(); // signature → count
+  let consecutiveDupes = 0;
+  let consecutiveFailures = 0;
 
   while (!isDone && iterations < maxIterations) {
     if (signal?.aborted) {
@@ -171,7 +176,48 @@ export async function runAgent(userInput, callbacks = {}) {
       continue;
     }
 
+    // ─── LOOP DETECTION ───────────────────────────────────────────────
+    // Check if these exact tool calls were already made this turn
+    let allDupes = true;
+    for (const tc of toolCalls) {
+      const sig = tc.name + ":" + JSON.stringify(tc.args);
+      const count = (seenToolCalls.get(sig) || 0) + 1;
+      seenToolCalls.set(sig, count);
+      if (count <= 1) allDupes = false;
+    }
+    if (allDupes) {
+      consecutiveDupes++;
+    } else {
+      consecutiveDupes = 0;
+    }
+
+    let wasForcedToStop = false;
+    if (consecutiveDupes >= 2 || consecutiveFailures >= 3) {
+      const reason = consecutiveDupes >= 2 ? "Loop detected" : "Persistent failures detected";
+      const msg = `\n⚠️ ${reason} — stopping to provide a conclusion.\n`;
+      onText(msg);
+      finalResponse += msg;
+      
+      memory.push({ role: "tool", blocks: [{ 
+        type: "tool_result", 
+        id: "loop_break", 
+        name: "system", 
+        output: `CRITICAL: ${reason.toUpperCase()}. STOP all actions now. Provide your final [RESULT] summary explaining why you stopped (e.g. why the command failed) and what the user needs to do.` 
+      }]});
+      
+      toolCalls.length = 0;
+      wasForcedToStop = true;
+    }
+
     // ─── EXECUTE TOOL CALLS ─────────────────────────────────────────
+    if (toolCalls.length === 0) {
+      // If we just forced a stop, we allow ONE MORE turn for the summary.
+      // But if we already did that turn (wasForcedToStop is false), then we are done.
+      if (!wasForcedToStop) {
+        isDone = true;
+      }
+      continue;
+    }
     const readCalls = toolCalls.filter((tc) => isReadOnlyTool(tc.name));
     const writeCalls = toolCalls.filter((tc) => !isReadOnlyTool(tc.name));
     const resultBlocks = [];
@@ -201,6 +247,35 @@ export async function runAgent(userInput, callbacks = {}) {
 
     memory.push({ role: "tool", blocks: resultBlocks });
 
+    // ─── FAILURE DETECTION ──────────────────────────────────────────
+    let turnHasSuccess = false;
+    for (const b of resultBlocks) {
+      const out = String(b.output);
+      if (!out.startsWith("❌") && !out.startsWith("🛑") && !out.toLowerCase().includes("error")) {
+        turnHasSuccess = true;
+      }
+    }
+    if (turnHasSuccess) {
+      consecutiveFailures = 0;
+    } else {
+      consecutiveFailures++;
+    }
+
+    if (consecutiveFailures >= 3) {
+      const msg = "\n⚠️ Persistent failures detected — stopping to provide a conclusion.\n";
+      onText(msg);
+      finalResponse += msg;
+
+      memory.push({ role: "tool", blocks: [{ 
+        type: "tool_result", 
+        id: "failure_break", 
+        name: "system", 
+        output: "PERSISTENT FAILURES: Multiple tools have failed consecutively. STOP all actions now. Provide your final [RESULT] summary explaining the root cause (e.g. Access Denied, Connection Refused) and manual fix instructions." 
+      }]});
+      
+      // Let it loop one last time with no tool calls to get the text summary
+    }
+
     // P0: Adaptive context window management — compress if turn gets too long.
     const nextMemory = await compressMemoryIfNeeded(memory);
     if (nextMemory !== memory) {
@@ -219,7 +294,5 @@ export async function runAgent(userInput, callbacks = {}) {
   onDone();
 
   await saveMemory(memory, signal);
-  globalTracker.saveToFile(agentModel);
-
   return finalResponse;
 }

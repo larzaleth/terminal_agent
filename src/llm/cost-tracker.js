@@ -9,6 +9,8 @@ import { writeFileAtomicSync } from "../utils/utils.js";
 // ===========================
 const PRICING = {
   // Gemini
+  "gemini-3.1-pro": { input: 0.00125, output: 0.005 },
+  "gemini-3-flash": { input: 0.00001875, output: 0.000075 },
   "gemini-2.5-flash": { input: 0.00001875, output: 0.000075 },
   "gemini-2.0-flash": { input: 0.00001, output: 0.00004 },
   "gemini-1.5-flash": { input: 0.0000075, output: 0.00003 },
@@ -35,8 +37,9 @@ const PRICING = {
 
 function pricingFor(model) {
   if (PRICING[model]) return PRICING[model];
-  // Fuzzy match by prefix for unknown variants.
-  for (const key of Object.keys(PRICING)) {
+  // Fuzzy match by prefix, longer keys first for better specificity.
+  const sortedKeys = Object.keys(PRICING).sort((a, b) => b.length - a.length);
+  for (const key of sortedKeys) {
     if (model?.startsWith(key)) return PRICING[key];
   }
   return PRICING["gemini-2.5-flash"]; // safe default for unknown models
@@ -177,18 +180,53 @@ export class CostTracker {
     console.log(chalk.cyan("=".repeat(50) + "\n"));
   }
 
-  saveToFile(model, filename = COST_REPORT_FILE) {
-    const stats = this.getStats(model);
-    const report = { timestamp: new Date().toISOString(), model, ...stats };
+  saveTurn(model, turnEntry, filename = COST_REPORT_FILE) {
+    const usdToIdr = 16000;
+    const requestCostIdr = Math.ceil(turnEntry.cost * usdToIdr);
+
+    const entry = {
+      timestamp: new Date().toISOString(),
+      model,
+      tokens: turnEntry.tokens,
+      cost_usd: turnEntry.cost,
+      cost_idr: requestCostIdr,
+    };
 
     try {
-      let history = [];
+      let data = { requests: [], total_usd: 0, total_idr: 0 };
       if (fs.existsSync(filename)) {
-        history = JSON.parse(fs.readFileSync(filename, "utf-8"));
+        try {
+          const raw = fs.readFileSync(filename, "utf-8");
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            // Migration from legacy array format
+            data.requests = parsed.map((p) => ({
+              timestamp: p.timestamp,
+              model: p.model,
+              tokens: (p.usage?.generation?.inputTokens || 0) + (p.usage?.generation?.outputTokens || 0),
+              cost_usd: p.cost?.total || 0,
+              cost_idr: Math.ceil((p.cost?.total || 0) * usdToIdr),
+            }));
+            data.total_usd = data.requests.reduce((s, r) => s + r.cost_usd, 0);
+            data.total_idr = data.requests.reduce((s, r) => s + r.cost_idr, 0);
+          } else {
+            data = parsed;
+          }
+        } catch {
+          /* reset on parse error */
+        }
       }
-      history.push(report);
-      if (history.length > 100) history = history.slice(-100);
-      writeFileAtomicSync(filename, JSON.stringify(history, null, 2));
+
+      data.requests.push(entry);
+      data.total_usd += entry.cost_usd;
+      data.total_idr += entry.cost_idr;
+
+      // Keep only last 1000 requests to avoid file bloating
+      if (data.requests.length > 1000) {
+        data.requests = data.requests.slice(-1000);
+      }
+
+      writeFileAtomicSync(filename, JSON.stringify(data, null, 2));
     } catch (err) {
       console.error(chalk.red(`❌ Failed to save cost report: ${err.message}`));
     }
@@ -213,25 +251,23 @@ export function viewCostHistory(limit = 10) {
       return;
     }
 
-    const history = JSON.parse(fs.readFileSync(COST_REPORT_FILE, "utf-8"));
-    const recent = history.slice(-limit);
+    const data = JSON.parse(fs.readFileSync(COST_REPORT_FILE, "utf-8"));
+    const requests = data.requests || [];
+    const recent = requests.slice(-limit);
 
     console.log(chalk.cyan("\n" + "=".repeat(50)));
-    console.log(chalk.cyan.bold(`📊 COST HISTORY (Last ${limit} sessions)`));
+    console.log(chalk.cyan.bold(`📊 COST HISTORY (Last ${limit} requests)`));
     console.log(chalk.cyan("=".repeat(50) + "\n"));
 
-    let totalCost = 0;
-    recent.forEach((session, idx) => {
-      const date = new Date(session.timestamp).toLocaleString();
+    recent.forEach((req, idx) => {
+      const date = new Date(req.timestamp).toLocaleString();
       console.log(chalk.white(`${idx + 1}. ${date}`));
-      console.log(chalk.dim(`   Model: ${session.model}`));
-      console.log(chalk.dim(`   Cost: $${session.cost.total.toFixed(6)}`));
-      console.log(chalk.dim(`   Duration: ${session.duration.toFixed(1)}s`));
-      console.log(chalk.dim(`   Cache Hit Rate: ${session.cacheHitRate}%\n`));
-      totalCost += session.cost.total;
+      console.log(chalk.dim(`   Model: ${req.model}`));
+      console.log(chalk.dim(`   Cost:  $${req.cost_usd.toFixed(6)} (Rp${req.cost_idr.toLocaleString()})`));
+      console.log(chalk.dim(`   Tokens: ${req.tokens.toLocaleString()}\n`));
     });
 
-    console.log(chalk.green.bold(`💰 Total Cost (last ${limit}): $${totalCost.toFixed(6)}`));
+    console.log(chalk.green.bold(`💰 Grand Total: $${data.total_usd.toFixed(4)} (Rp${data.total_idr.toLocaleString()})`));
     console.log(chalk.cyan("=".repeat(50) + "\n"));
   } catch (err) {
     console.error(chalk.red(`❌ Failed to read cost history: ${err.message}`));

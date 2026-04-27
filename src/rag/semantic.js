@@ -204,7 +204,6 @@ export async function buildIndex(folderPath) {
   const index = [];
   const limit = pLimit(EMBEDDING_CONCURRENCY);
 
-  console.log(`🚀 Starting batch indexing for ${files.length} files...`);
   const startTime = Date.now();
 
   for (const file of files) {
@@ -213,15 +212,12 @@ export async function buildIndex(folderPath) {
       const chunks = chunkText(content);
       if (chunks.length === 0) continue;
 
-      console.log(`📄 Indexing: ${file} (${chunks.length} chunks)`);
-
       for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
         const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
         const vectors = await Promise.all(
           batch.map((chunk) =>
             limit(() =>
               embed(chunk).catch((err) => {
-                console.warn(`⚠️ Embedding failed for chunk in ${file}: ${err.message}`);
                 return null;
               })
             )
@@ -239,8 +235,8 @@ export async function buildIndex(folderPath) {
           }
         });
       }
-    } catch (err) {
-      console.error(`❌ Failed to index ${file}: ${err.message}`);
+    } catch {
+      // Indexing failed for this file, skip and continue
     }
   }
 
@@ -250,8 +246,7 @@ export async function buildIndex(folderPath) {
   const stat = await fs.stat(INDEX_FILE);
   _indexCache = { mtime: stat.mtimeMs, data: index };
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`✅ Index saved with ${index.length} embeddings in ${duration}s`);
+
 }
 
 /**
@@ -295,7 +290,7 @@ export async function updateIndex(filePath) {
         });
       }
     } catch (err) {
-      console.warn(`⚠️ Incremental index update failed for ${relativePath}: ${err.message}`);
+
     }
   }
 

@@ -2,7 +2,14 @@ import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
 import { updateIndex } from "./semantic.js";
-import { IGNORE_DIRS, CODE_EXTS } from "../config/constants.js";
+import {
+  IGNORE_DIRS,
+  CODE_EXTS,
+  INDEX_FILE,
+  MEMORY_FILE,
+  COST_REPORT_FILE,
+  ERROR_LOG_FILE,
+} from "../config/constants.js";
 
 let watcher = null;
 
@@ -13,11 +20,19 @@ let watcher = null;
 export function startWatcher(rootPath = process.cwd()) {
   if (watcher) return; // Already running
 
+  const internalFiles = new Set([
+    INDEX_FILE,
+    MEMORY_FILE,
+    COST_REPORT_FILE,
+    ERROR_LOG_FILE,
+  ]);
+
   const watchOptions = {
     ignored: (filePath) => {
       const name = path.basename(filePath);
       if (name.startsWith(".")) return true; // Ignore hidden files/dirs
       if (IGNORE_DIRS.has(name)) return true; // Ignore common build/vendor dirs
+      if (internalFiles.has(name)) return true; // Ignore our own state files
       return false;
     },
     persistent: true,

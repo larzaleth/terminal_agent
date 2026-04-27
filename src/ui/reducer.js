@@ -65,7 +65,7 @@ export function reducer(state, action) {
       } else {
         blocks.push({ type: "text", text: action.text });
       }
-      return { ...state, pending: { ...state.pending, blocks }, status: "thinking" };
+      return { ...state, pending: { ...state.pending, blocks }, status: "writing" };
     }
     case "tool_start": {
       if (!state.pending) return state;
@@ -152,7 +152,7 @@ export function reducer(state, action) {
         : state.turnHistory;
       return {
         ...state,
-        finalized: [...state.finalized, state.pending],
+        finalized: [...state.finalized, { ...state.pending, durationMs: action.turnEntry?.durationMs }],
         pending: null,
         status: "idle",
         statusMessage: "",
@@ -162,6 +162,13 @@ export function reducer(state, action) {
         turnHistory,
       };
     }
+    case "scroll": {
+      let next = state.scrollOffset + action.delta;
+      if (next < 0) next = 0;
+      return { ...state, scrollOffset: next };
+    }
+    case "scroll_reset":
+      return { ...state, scrollOffset: 0 };
     case "set_status_message":
       return { ...state, statusMessage: action.message };
     case "set_prompt":

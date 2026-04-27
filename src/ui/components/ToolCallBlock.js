@@ -64,10 +64,7 @@ export function ToolCallBlock({ tool, args, status, result, liveOutput, expanded
       Box,
       { flexDirection: "column", marginLeft: 2, marginTop: 1 },
       h(Text, { color: "blue", dimColor: true }, "Args: " + JSON.stringify(args)),
-      h(Box, { marginTop: 0 }),
-      ...resultText.split("\n").map((line, i) =>
-        h(Text, { key: `r${i}`, color: isError ? "red" : "gray" }, "> " + line)
-      )
+      h(Text, { color: isError ? "red" : "gray" }, resultText)
     )
   );
 }

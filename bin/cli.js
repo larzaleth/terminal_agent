@@ -59,16 +59,14 @@ function showBanner() {
 }
 
 // ===========================
-// 🧪 TUI MODE (Ink)
+// 🧪 TUI MODE (Pure CLI — no Ink)
 // ===========================
 async function runTui() {
+  showBanner();
   const { startTui } = await import("../src/ui/run.js");
-  const { instance } = startTui();
   startWatcher();
-  await instance.waitUntilExit();
-  stopWatcher();
-  await shutdownMcp().catch(() => {});
-  process.exit(0);
+  startTui();
+  // startTui now manages its own event loop and process.exit
 }
 
 // ===========================
