@@ -1,6 +1,6 @@
 {
   "name": "ai-coding-agent",
-  "version": "2.4.0",
+  "version": "2.5.1",
   "description": "A terminal-based AI coding agent powered by Google Gemini, featuring RAG, streaming, smart planning, and cost tracking.",
   "type": "module",
   "bin": {

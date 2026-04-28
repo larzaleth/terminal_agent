@@ -23,8 +23,8 @@ const BLOCKED_PATTERNS = [
 // Commands (by first token) that are read-only / safe — run without asking.
 // NOTE: we also require no obvious redirection/pipe to a shell interpreter.
 const AUTO_ALLOWED = new Set([
-  "ls", "pwd", "whoami", "which", "type", "echo", "cat", "head", "tail",
-  "wc", "file", "stat", "date", "uname", "env", "printenv",
+  "ls", "dir", "pwd", "whoami", "which", "type", "echo", "cat", "head", "tail",
+  "wc", "file", "stat", "date", "uname", "env", "printenv", "cls",
   "tree", "find", "du", "df",
   "git", "npm", "yarn", "pnpm", "pip", "pip3",
   "jest", "vitest", "pytest", "tsc", "eslint", "prettier", "ruff",
@@ -39,9 +39,9 @@ const FORCE_CONFIRM_COMMANDS = new Set([
 // Sub-commands that turn an AUTO command into a write operation → force confirm.
 const UNSAFE_SUBCMDS = {
   git: new Set(["push", "reset", "rebase", "clean", "checkout", "restore", "rm", "commit", "merge", "revert"]),
-  npm: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
-  yarn: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
-  pnpm: new Set(["publish", "unpublish", "run", "start", "test", "build", "dev"]),
+  npm: new Set(["publish", "unpublish", "run", "start", "build", "dev"]),
+  yarn: new Set(["publish", "unpublish", "run", "start", "build", "dev"]),
+  pnpm: new Set(["publish", "unpublish", "run", "start", "build", "dev"]),
 };
 
 export function classifyCommand(cmd) {
@@ -75,6 +75,13 @@ export function classifyCommand(cmd) {
 
   // Secondary check: AUTO command with unsafe subcommand → confirm.
   if (UNSAFE_SUBCMDS[first]?.has(second)) {
+    // Special case: allow "run test" and "run lint" even though "run" is usually unsafe
+    if (["npm", "yarn", "pnpm"].includes(first) && second === "run") {
+      const third = tokens[2];
+      if (["test", "lint", "format:check"].includes(third)) {
+        return { verdict: "auto", reason: `${first} run ${third} is safe` };
+      }
+    }
     return { verdict: "confirm", reason: `${first} ${second} may modify state or start a process` };
   }
 

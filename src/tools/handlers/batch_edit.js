@@ -65,8 +65,9 @@ export default async function ({ edits }) {
       }
 
       const { added, removed } = diffStats(originalContent, currentContent);
+      const isSmallChange = (added + removed <= 50);
 
-      if (!autoApprove) {
+      if (!autoApprove && !isSmallChange) {
         const { decision } = await getPrompter().editApproval({
           filePath,
           oldContent: originalContent,

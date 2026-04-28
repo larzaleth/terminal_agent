@@ -1,9 +1,10 @@
 {
+  "promptVersion": "senior-v1.production",
   "provider": "gemini",
   "model": "gemini-3-flash-preview",
-  "plannerModel": "gemini-3-flash-preview",
+  "plannerModel": "gemini-3.1-pro-preview",
   "summaryModel": "gemini-2.5-flash-lite",
-  "maxIterations": 25,
+  "maxIterations": 100,
   "maxMemoryTurns": 20,
   "mcpServers": {}
 }

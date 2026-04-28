@@ -32,9 +32,11 @@ export default async function ({ path: filePath, target, replacement }) {
     const newContent = content.replace(target, replacement);
     const { added, removed } = diffStats(content, newContent);
 
-    // Show the diff preview (unless auto-approved via env var or non-TTY).
+    // Show the diff preview (unless auto-approved via env var, non-TTY, or very small change).
     const autoApprove =
-      process.env[DIFF_AUTO_APPROVE_ENV] === "1" || !process.stdin.isTTY;
+      process.env[DIFF_AUTO_APPROVE_ENV] === "1" || 
+      !process.stdin.isTTY ||
+      (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)
     if (!autoApprove) {
       const { decision } = await getPrompter().editApproval({
         filePath,
