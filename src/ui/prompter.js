@@ -1,4 +1,6 @@
-// Pluggable confirmation interface for the plain CLI.
+// Pluggable prompter interface — abstracts user confirmation away from any
+// specific UI. Default implementation uses readline (legacy REPL mode).
+// The Ink TUI swaps in its own implementation via `setPrompter()`.
 
 import readline from "readline/promises";
 
