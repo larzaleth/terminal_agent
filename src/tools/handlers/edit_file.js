@@ -6,7 +6,6 @@ import { diffStats } from "../diff.js";
 import { getPrompter } from "../../core/prompter.js";
 import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
 import { loadConfig } from "../../config/config.js";
-
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath, target, replacement }) {
@@ -21,7 +20,6 @@ export default async function ({ path: filePath, target, replacement }) {
     }
 
     const content = await fs.readFile(filePath, "utf-8");
-
     // P0: Check for multiple occurrences
     const occurrences = content.split(target).length - 1;
     if (occurrences === 0) {
