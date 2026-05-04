@@ -21,6 +21,7 @@ import {
   CODE_EXTS,
 } from "../config/constants.js";
 import { writeFileAtomic } from "../utils/utils.js";
+import { buildBm25Index, scoreBm25, tokenize } from "./bm25.js";
 
 const DEFAULT_EMBEDDING_MODELS = {
   gemini: "text-embedding-004",
@@ -108,11 +109,90 @@ export async function embed(text) {
     return cached;
   }
 
-  const provider = getProvider(spec.provider);
+  const provider = await getProvider(spec.provider);
   const embedding = await provider.embed(text, spec.model);
   setCachedResponse(text, cacheKey, embedding);
   globalTracker.trackEmbedding(text, false, spec.model);
   return embedding;
+}
+
+/**
+ * Batch embed many texts. Cache-aware:
+ *   1. Each text checked against cache → hits returned directly.
+ *   2. Misses sent in a single batch API call (or sliced into multiple
+ *      requests of EMBEDDING_BATCH_SIZE if too many).
+ *   3. New vectors persisted to cache.
+ *
+ * Falls back to per-item `embed()` (with cap concurrency) if the provider
+ * does not support batch — keeps callers oblivious to that distinction.
+ *
+ * @param {string[]} texts
+ * @returns {Promise<Array<number[]|null>>} Same length as `texts`. `null`
+ *   entries indicate the embed call failed for that index (caller decides
+ *   whether to retry / drop / surface).
+ */
+export async function embedMany(texts) {
+  if (!Array.isArray(texts) || texts.length === 0) return [];
+  const spec = resolveEmbeddingSpec();
+  const cacheKey = `${spec.provider}:${spec.model}`;
+  const provider = await getProvider(spec.provider);
+
+  const out = new Array(texts.length).fill(null);
+  const missingIdx = [];
+  const missingTexts = [];
+
+  // Pass 1: cache lookup
+  for (let i = 0; i < texts.length; i++) {
+    const cached = getCachedResponse(texts[i], cacheKey);
+    if (cached) {
+      out[i] = cached;
+      globalTracker.trackEmbedding(texts[i], true, spec.model);
+    } else {
+      missingIdx.push(i);
+      missingTexts.push(texts[i]);
+    }
+  }
+
+  if (missingTexts.length === 0) return out;
+
+  // Pass 2: batch-fetch misses, sliced into chunks of EMBEDDING_BATCH_SIZE.
+  const supportsBatch = typeof provider.embedBatch === "function";
+  if (supportsBatch) {
+    for (let i = 0; i < missingTexts.length; i += EMBEDDING_BATCH_SIZE) {
+      const slice = missingTexts.slice(i, i + EMBEDDING_BATCH_SIZE);
+      const sliceIdx = missingIdx.slice(i, i + EMBEDDING_BATCH_SIZE);
+      try {
+        const vectors = await provider.embedBatch(slice, spec.model);
+        for (let j = 0; j < slice.length; j++) {
+          out[sliceIdx[j]] = vectors[j];
+          setCachedResponse(slice[j], cacheKey, vectors[j]);
+          globalTracker.trackEmbedding(slice[j], false, spec.model);
+        }
+      } catch (err) {
+        log.warn(`embedBatch slice failed (${slice.length} items): ${err.message}`);
+        // Don't blow up the whole index — leave out[idx] as null so caller can skip
+      }
+    }
+    return out;
+  }
+
+  // Fallback: single-item with capped concurrency (preserves cache writes).
+  const limit = pLimit(EMBEDDING_CONCURRENCY);
+  await Promise.all(
+    missingTexts.map((text, j) =>
+      limit(async () => {
+        try {
+          const vec = await provider.embed(text, spec.model);
+          out[missingIdx[j]] = vec;
+          setCachedResponse(text, cacheKey, vec);
+          globalTracker.trackEmbedding(text, false, spec.model);
+        } catch (err) {
+          log.warn(`embed failed: ${err.message}`);
+        }
+      })
+    )
+  );
+  return out;
 }
 
 // ===========================
@@ -198,52 +278,51 @@ async function getAllFiles(dir, exts = CODE_EXTS) {
 }
 
 // ===========================
-// 🔥 BUILD INDEX (async fs + concurrency-limited embedding)
+// 🔥 BUILD INDEX (true batch embeddings — single API call per N chunks)
 // ===========================
 export async function buildIndex(folderPath) {
   const files = await getAllFiles(folderPath);
   const index = [];
-  const limit = pLimit(EMBEDDING_CONCURRENCY);
 
-  const startTime = Date.now();
   let failedChunks = 0;
   let successfulChunks = 0;
 
+  // Collect all chunks across all files first, then batch-embed in one pass.
+  // This lets the provider service multiple files per HTTP round-trip.
+  const allChunks = []; // [{ file, chunk, type }]
   for (const file of files) {
     try {
       const content = await fs.readFile(file, "utf-8");
       const chunks = chunkText(content);
-      if (chunks.length === 0) continue;
-
-      for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
-        const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
-        const vectors = await Promise.all(
-          batch.map((chunk) =>
-            limit(() =>
-              embed(chunk).catch((err) => {
-                failedChunks++;
-                log.warn(`embed failed for chunk in ${file}: ${err.message}`);
-                return null;
-              })
-            )
-          )
-        );
-
-        batch.forEach((chunk, idx) => {
-          if (vectors[idx]) {
-            successfulChunks++;
-            index.push({
-              file,
-              content: chunk,
-              embedding: normalize(vectors[idx]),
-              type: detectType(file),
-            });
-          }
-        });
+      const type = detectType(file);
+      for (const chunk of chunks) {
+        allChunks.push({ file, chunk, type });
       }
     } catch (err) {
       log.warn(`indexing failed for ${file}: ${err.message}`);
     }
+  }
+
+  if (allChunks.length === 0) {
+    await writeFileAtomic(INDEX_FILE, JSON.stringify([]));
+    return { successfulChunks: 0, failedChunks: 0, files: 0 };
+  }
+
+  const vectors = await embedMany(allChunks.map((c) => c.chunk));
+
+  for (let i = 0; i < allChunks.length; i++) {
+    const vec = vectors[i];
+    if (!vec) {
+      failedChunks++;
+      continue;
+    }
+    successfulChunks++;
+    index.push({
+      file: allChunks[i].file,
+      content: allChunks[i].chunk,
+      embedding: normalize(vec),
+      type: allChunks[i].type,
+    });
   }
 
   await writeFileAtomic(INDEX_FILE, JSON.stringify(index));
@@ -259,7 +338,7 @@ export async function buildIndex(folderPath) {
   const stat = await fs.stat(INDEX_FILE);
   _indexCache = { mtime: stat.mtimeMs, data: index };
 
-
+  return { successfulChunks, failedChunks, files: files.length };
 }
 
 /**
@@ -283,27 +362,21 @@ export async function updateIndex(filePath) {
     try {
       const content = await fs.readFile(normalizedPath, "utf-8");
       const chunks = chunkText(content);
-      const limit = pLimit(EMBEDDING_CONCURRENCY);
-
-      for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
-        const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
-        const vectors = await Promise.all(
-          batch.map((chunk) => limit(() => embed(chunk)))
-        );
-
-        batch.forEach((chunk, idx) => {
-          if (vectors[idx]) {
+      if (chunks.length > 0) {
+        const vectors = await embedMany(chunks);
+        for (let i = 0; i < chunks.length; i++) {
+          if (vectors[i]) {
             index.push({
               file: relativePath,
-              content: chunk,
-              embedding: normalize(vectors[idx]),
+              content: chunks[i],
+              embedding: normalize(vectors[i]),
               type: detectType(relativePath),
             });
           }
-        });
+        }
       }
     } catch (err) {
-
+      log.warn(`updateIndex failed for ${normalizedPath}: ${err.message}`);
     }
   }
 
@@ -318,6 +391,8 @@ export async function updateIndex(filePath) {
 // 🔹 LOAD INDEX (sync is fine — called once per session, small JSON mostly)
 // ===========================
 let _indexCache = null;
+let _bm25Cache = null; // { mtime, bm25 } — mirrors _indexCache.mtime so we
+//                        invalidate together when the index file changes.
 
 export function loadIndex() {
   if (!fsSync.existsSync(INDEX_FILE)) return [];
@@ -333,37 +408,51 @@ export function loadIndex() {
 }
 
 // ===========================
-// 🔹 SEARCH (Hybrid: Vector + Keyword)
+// 🔹 SEARCH (Hybrid: Vector + BM25 + exact-match bonus)
 // ===========================
+/**
+ * Lazily compute & cache the BM25 index for the given in-memory `index`.
+ * Cache keyed by object identity — invalidated whenever loadIndex() returns
+ * a fresh array (which only happens on file mtime change).
+ */
+function getBm25Cache(index) {
+  if (_bm25Cache && _bm25Cache.indexRef === index) return _bm25Cache.bm25;
+  const bm25 = buildBm25Index(index.map((it) => it.content));
+  _bm25Cache = { indexRef: index, bm25 };
+  return bm25;
+}
+
 export async function search(query, index, options = {}) {
   const { topK = RAG_TOP_K, threshold = RAG_THRESHOLD, alpha = 0.7 } = options;
   if (!index || index.length === 0) return [];
 
   const qVec = normalize(await embed(query));
-  const queryTerms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+  const queryTokens = tokenize(query);
+  const bm25 = getBm25Cache(index);
 
-  const results = index.map((item) => {
-    // 1. Vector Score (Semantic)
+  // First pass: compute raw BM25 scores so we can normalize across the corpus.
+  const bm25Raw = new Array(index.length);
+  let bm25Max = 0;
+  for (let i = 0; i < index.length; i++) {
+    const s = queryTokens.length > 0
+      ? scoreBm25(queryTokens, bm25.docs[i], bm25.idf, bm25.avgDl)
+      : 0;
+    bm25Raw[i] = s;
+    if (s > bm25Max) bm25Max = s;
+  }
+
+  // Second pass: combine vector cosine + normalized BM25 + exact-match bonus.
+  const results = index.map((item, i) => {
     const vectorScore = dotProduct(qVec, item.embedding);
+    const bm25Score = bm25Max > 0 ? bm25Raw[i] / bm25Max : 0;
 
-    // 2. Keyword Score (Lexical)
-    let keywordScore = 0;
-    if (queryTerms.length > 0) {
-      const contentLower = item.content.toLowerCase();
-      let matches = 0;
-      for (const term of queryTerms) {
-        if (contentLower.includes(term)) matches++;
-      }
-      keywordScore = matches / queryTerms.length;
-      
-      // Bonus for exact symbol match (case sensitive or specific word boundaries)
-      if (item.content.includes(query)) keywordScore += 0.2;
-    }
+    let lexicalScore = bm25Score;
+    // Exact substring match bumps the score (handles unique identifiers
+    // like API names, error codes, file paths that BM25 alone misses).
+    if (query.length >= 3 && item.content.includes(query)) lexicalScore += 0.2;
 
-    // 3. Combined Score
-    const score = (alpha * vectorScore) + ((1 - alpha) * keywordScore);
-
-    return { ...item, score, vectorScore, keywordScore };
+    const score = alpha * vectorScore + (1 - alpha) * lexicalScore;
+    return { ...item, score, vectorScore, keywordScore: lexicalScore, bm25Score: bm25Raw[i] };
   });
 
   return results

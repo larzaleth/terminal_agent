@@ -3,6 +3,13 @@ import chalk from "chalk";
 import { COST_REPORT_FILE } from "../config/constants.js";
 import { writeFileAtomicSync } from "../utils/utils.js";
 
+import { estimateTokens as baseEstimateTokens } from "../utils/utils.js";
+
+// Cost tracker uses a more aggressive ratio (3.5) — closer to actual billed
+// tokens for OpenAI / Gemini when usageMetadata is unavailable. Memory/context
+// window logic in utils.js intentionally uses the looser default ratio (4).
+const estimateTokens = (text) => baseEstimateTokens(text, 3.5);
+
 // ===========================
 // 🔹 PRICING (per 1K tokens, USD)
 // Sources: Google AI Studio, OpenAI, Anthropic pricing pages (Jan 2026).
@@ -35,11 +42,12 @@ const PRICING = {
   "claude-3-opus-latest": { input: 0.015, output: 0.075 },
 };
 
+// Pre-sort once at module load time (longer keys first → better prefix specificity).
+const SORTED_PRICING_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length);
+
 function pricingFor(model) {
   if (PRICING[model]) return PRICING[model];
-  // Fuzzy match by prefix, longer keys first for better specificity.
-  const sortedKeys = Object.keys(PRICING).sort((a, b) => b.length - a.length);
-  for (const key of sortedKeys) {
+  for (const key of SORTED_PRICING_KEYS) {
     if (model?.startsWith(key)) return PRICING[key];
   }
   return PRICING["gemini-2.5-flash"]; // safe default for unknown models
@@ -47,10 +55,6 @@ function pricingFor(model) {
 
 // Fallback char→token ratio ONLY used when the API did not return usageMetadata.
 // Real counts come from response.usageMetadata (populated by Gemini).
-function estimateTokens(text) {
-  if (!text) return 0;
-  return Math.ceil(text.length / 3.5);
-}
 
 // ===========================
 // 🔹 COST TRACKER CLASS

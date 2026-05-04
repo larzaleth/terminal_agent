@@ -13,10 +13,22 @@ import { getMcpTools } from "../mcp/client.js";
 import { log } from "../utils/logger.js";
 
 const LOOP_WINDOW = 10;        // only look at the last N tool calls for dupe detection
-const LOOP_DUPE_LIMIT = 5;    // same signature ≥ this many times within window → stop
+const LOOP_DUPE_LIMIT = 3;     // same signature ≥ this many times within window → stop
 const FILE_READ_WARN = 6;      // warn agent after N reads of the same file
 const FILE_READ_HARD_LIMIT = 15; // block further reads of that file (but don't stop agent)
 const WRITE_TOOLS = new Set(["write_file", "edit_file", "replace_lines", "batch_edit"]);
+
+/**
+ * Deterministic JSON stringify — sorts object keys at every depth so that
+ * `{a:1,b:2}` and `{b:2,a:1}` produce identical strings.
+ * Used for loop-detection signatures.
+ */
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
+}
 
 /**
  * @typedef {Object} AgentRunOptions
@@ -68,10 +80,15 @@ async function buildToolset(definition) {
  */
 function resolveRuntime(definition) {
   const cfg = loadConfig();
+  // 0 / undefined / null → unlimited; positive integer → hard token budget per
+  // call to runAgent(). When exceeded, agent is asked to wrap up gracefully.
+  const rawBudget = definition?.maxTokensPerTurn ?? cfg.maxTokensPerTurn ?? 0;
+  const maxTokensPerTurn = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : 0;
   return {
     provider: definition?.provider || cfg.provider || "gemini",
     model: definition?.model || cfg.model,
     maxIterations: definition?.maxIterations || cfg.maxIterations || MAX_ITERATIONS_DEFAULT,
+    maxTokensPerTurn,
     systemInstruction: definition?.systemPromptOverride || getSystemPrompt(),
   };
 }
@@ -101,7 +118,7 @@ export async function runAgent(userInput, callbacks = {}) {
   } = callbacks;
 
   const runtime = resolveRuntime(definition);
-  const provider = getProvider(runtime.provider);
+  const provider = await getProvider(runtime.provider);
   const toolset = await buildToolset(definition);
   const toolLimit = pLimit(TOOL_CONCURRENCY);
 
@@ -145,6 +162,8 @@ export async function runAgent(userInput, callbacks = {}) {
   let isDone = false;
   let finalResponse = "";
   let iterations = 0;
+  let cumulativeTokens = 0;        // total input+output tokens across this runAgent call
+  let budgetWarned = false;        // true after we've injected the wrap-up notice
   const recentSignatures = [];     // sliding window of recent tool call signatures
   let consecutiveFailures = 0;
   const fileReadCounts = new Map();  // track how many times each file has been read
@@ -154,6 +173,28 @@ export async function runAgent(userInput, callbacks = {}) {
       onText("\n⚠️ Cancelled by user.\n");
       break;
     }
+
+    // ─── TOKEN BUDGET CHECK (before streaming) ───────────────────────────
+    // Run BEFORE we open a new provider stream so the agent's previous turn
+    // (which may have included tool_calls) has already been resolved with
+    // tool_results — keeping the conversation state valid.
+    // First overage: inject a wrap-up nudge as a user message; the agent gets
+    // one more turn to summarize. Second overage: hard-stop.
+    if (runtime.maxTokensPerTurn > 0 && cumulativeTokens >= runtime.maxTokensPerTurn) {
+      if (!budgetWarned) {
+        budgetWarned = true;
+        const notice =
+          `🛑 Token budget reached (${cumulativeTokens}/${runtime.maxTokensPerTurn} tokens). ` +
+          `Stop calling tools and provide a concise final summary of progress so far. ` +
+          `Mention any unfinished work clearly so the user knows what's left.`;
+        memory.push({ role: "user", blocks: [{ type: "text", text: notice }] });
+        onText("\n" + notice + "\n");
+      } else {
+        onText("\n⚠️ Token budget exhausted — stopping agent.\n");
+        break;
+      }
+    }
+
     iterations++;
     onThinking();
 
@@ -197,8 +238,11 @@ export async function runAgent(userInput, callbacks = {}) {
         promptTokenCount: usage.inputTokens,
         candidatesTokenCount: usage.outputTokens,
       });
+      cumulativeTokens += (usage.inputTokens || 0) + (usage.outputTokens || 0);
     } else {
       globalTracker.trackGeneration(runtime.model, "", streamedText);
+      // Rough estimate when API didn't report — uses utils.estimateTokens (ratio 4).
+      cumulativeTokens += Math.ceil(streamedText.length / 4);
     }
 
     // Build assistant message from this turn's output.
@@ -227,8 +271,10 @@ export async function runAgent(userInput, callbacks = {}) {
     // ─── LOOP DETECTION (sliding window, self-resetting) ─────────────────
     // Add current tool call signatures to the window, then check if any
     // single signature has appeared LOOP_DUPE_LIMIT+ times in the window.
+    // Sort args keys so semantically-equal calls produce identical signatures
+    // regardless of the order returned by the LLM.
     for (const tc of toolCalls) {
-      recentSignatures.push(tc.name + ":" + JSON.stringify(tc.args));
+      recentSignatures.push(tc.name + ":" + stableStringify(tc.args));
     }
     while (recentSignatures.length > LOOP_WINDOW) recentSignatures.shift();
 

@@ -1,13 +1,17 @@
 # Dependencies
 node_modules/
 
-# Runtime artifacts
+# Runtime artifacts (agent state)
 index.json
 memory.json
 cost-report.json
+error.log
 .agent_cache/
+.agent_backups/
+.agent_sessions/
 transcript-*.md
 chat.log
+*.bak
 
 # Logs
 *.log
@@ -16,70 +20,19 @@ chat.log
 .env
 .env.*
 !.env.example
+*.env
 credentials.json
+.credentials
 *.pem
 *.key
-.credentials
 
 # Editor / OS
 .DS_Store
 .vscode/
 .idea/
 *.swp
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
+*.swo
+Thumbs.db
 -e 
 # Environment and credential files
 .env

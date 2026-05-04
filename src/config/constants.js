@@ -33,6 +33,10 @@ export const MAX_ITERATIONS_DEFAULT = 250;
 export const MAX_MEMORY_TURNS_DEFAULT = 20;
 export const MAX_MEMORY_TOKENS = 50_000; // Summarize when memory exceeds this estimated token count.
 export const MAX_TOOL_OUTPUT_CHARS = 200000;
+// Default preview cap for read_file when no startLine/endLine is specified.
+// Forces the agent to use range parameters for large files instead of
+// flooding context with whole-file dumps.
+export const FILE_PREVIEW_MAX_CHARS = 8000;
 export const MAX_COMMAND_OUTPUT_CHARS = 20000;
 export const COMMAND_TIMEOUT_MS = 60_000;
 export const COMMAND_MAX_BUFFER = 1024 * 1024 * 10;

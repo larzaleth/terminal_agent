@@ -1,23 +1,49 @@
 #!/usr/bin/env node
-import readline from "readline/promises";
+//
+// Skinny entrypoint — only the modules required to PARSE FLAGS are imported
+// at top level. Anything heavier (ink, chokidar, MCP, provider SDKs) is
+// loaded via dynamic import() inside the specific mode that needs it.
+// This keeps `--help`, `--version`, and `--init` cold-start under ~150ms.
+
 import fs from "fs";
+import readline from "readline/promises";
 import chalk from "chalk";
-import ora from "ora";
 import { formatDuration, writeFileAtomicSync } from "../src/utils/utils.js";
 import { getGlobalEnvPath, loadConfig, loadGlobalEnv } from "../src/config/config.js";
 import { getProviderApiKeySpec, upsertEnvValue } from "../src/config/provider-env.js";
-import { handleSlashCommand } from "../src/commands/slash.js";
-import { runAgent } from "../src/core/agents.js";
-import { getAgent, listAgents } from "../src/core/agents/index.js";
-import { globalTracker } from "../src/llm/cost-tracker.js";
-import { shutdownMcp } from "../src/mcp/client.js";
-import { startWatcher, stopWatcher } from "../src/rag/watcher.js";
 import { log } from "../src/utils/logger.js";
+import { getPackageVersion } from "../src/utils/version.js";
 
 // ===========================
-// 🔑 API KEY SETUP
+// 🆘 HELP / VERSION (instant — no heavy imports needed)
 // ===========================
-async function setupApiKey(rl, provider = loadConfig().provider) {
+function showHelp() {
+  console.log(`
+${chalk.cyan.bold("AI Coding Agent")} ${chalk.dim("v" + getPackageVersion())}
+
+${chalk.bold("Usage:")}
+  myagent                       Start interactive TUI mode
+  myagent --no-tui              Start readline mode (CI / non-TTY)
+  myagent --agent <name> "..."  Run a specialized one-shot agent
+  myagent --init [--yes|--force] Setup wizard (config + .agent + .gitignore)
+  myagent --help                Show this help
+  myagent --version             Show version
+
+${chalk.bold("Examples:")}
+  ${chalk.dim("# Bootstrap workspace")}
+  myagent --init --yes
+
+  ${chalk.dim("# Run analyzer agent on a folder")}
+  myagent --agent analyzer "audit src/"
+
+${chalk.bold("Docs:")} https://github.com/syarif-lbis/terminal_agent
+`);
+}
+
+// ===========================
+// 🔑 API KEY SETUP (only loaded in modes that need a key)
+// ===========================
+async function setupApiKey(rl, provider) {
   const globalEnvPath = getGlobalEnvPath();
   const spec = getProviderApiKeySpec(provider);
   if (process.env[spec.envVar]) return;
@@ -45,14 +71,15 @@ async function setupApiKey(rl, provider = loadConfig().provider) {
 }
 
 // ===========================
-// 🎨 BANNER (readline mode only)
+// 🎨 BANNER
 // ===========================
 function showBanner() {
   const config = loadConfig();
   const provider = getProviderApiKeySpec(config.provider).label;
+  const version = getPackageVersion();
   console.log(chalk.cyan.bold(`
 ╔══════════════════════════════════════╗
-║     🤖 AI Coding Agent v2.5.1      ║
+║     🤖 AI Coding Agent v${version.padEnd(13)}║
 ║     Powered by ${provider.padEnd(18)}║
 ╚══════════════════════════════════════╝`));
   console.log(chalk.dim("  Type your request, or use commands:"));
@@ -60,20 +87,39 @@ function showBanner() {
 }
 
 // ===========================
-// 🧪 TUI MODE (Pure CLI — no Ink)
+// 🧪 TUI MODE (Ink + React — heavy, only loaded here)
 // ===========================
 async function runTui() {
   showBanner();
-  const { startTui } = await import("../src/ui/run.js");
+  const [{ startTui }, { startWatcher }] = await Promise.all([
+    import("../src/ui/run.js"),
+    import("../src/rag/watcher.js"),
+  ]);
   startWatcher();
   startTui();
-  // startTui now manages its own event loop and process.exit
 }
 
 // ===========================
-// 🔁 READLINE MODE (fallback for non-TTY, CI, --no-tui)
+// 🔁 READLINE MODE (no Ink — used for CI, --no-tui, non-TTY)
 // ===========================
 async function runReadline() {
+  // Lazy: ora (37ms), runAgent (pulls memory/RAG/MCP/providers), watcher (chokidar)
+  const [
+    { default: ora },
+    { runAgent },
+    { handleSlashCommand },
+    { globalTracker },
+    { shutdownMcp },
+    { startWatcher, stopWatcher },
+  ] = await Promise.all([
+    import("ora"),
+    import("../src/core/agents.js"),
+    import("../src/commands/slash.js"),
+    import("../src/llm/cost-tracker.js"),
+    import("../src/mcp/client.js"),
+    import("../src/rag/watcher.js"),
+  ]);
+
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   await setupApiKey(rl, loadConfig().provider);
   showBanner();
@@ -151,31 +197,67 @@ async function runReadline() {
 // 🤖 ONE-SHOT AGENT MODE (--agent <name> "request...")
 // ===========================
 async function runOneShotAgent(agentName, request) {
-  const def = getAgent(agentName);
-  const startCost = globalTracker.getStats(def.model || loadConfig().model).cost.total;
+  const [
+    { runAgent },
+    { getAgent, listAgents },
+    { globalTracker },
+    { shutdownMcp },
+  ] = await Promise.all([
+    import("../src/core/agents.js"),
+    import("../src/core/agents/index.js"),
+    import("../src/llm/cost-tracker.js"),
+    import("../src/mcp/client.js"),
+  ]);
+
+  let def;
+  try {
+    def = getAgent(agentName);
+  } catch (err) {
+    console.error(chalk.red(`❌ ${err.message}`));
+    console.error(chalk.dim("Available agents:"));
+    for (const a of listAgents()) {
+      console.error(chalk.dim(`  ${a.name.padEnd(12)} ${a.description || ""}`));
+    }
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  const providerName = def.provider || config.provider;
+  const { envVar } = getProviderApiKeySpec(providerName);
+  if (!process.env[envVar]) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    await setupApiKey(rl, providerName);
+    rl.close();
+  }
+
+  const startCost = globalTracker.getStats(def.model || config.model).cost.total;
   const startMs = Date.now();
 
-  await runAgent(request, {
-    definition: def,
-    onPlan: () => {},
-    onThinking: () => {},
-    onText: (t) => process.stdout.write(t),
-    onToolCall: (name, args) => {
-      const summary = Object.entries(args || {})
-        .map(([k, v]) => `${k}=${String(v).slice(0, 30)}`)
-        .join(", ");
-      process.stderr.write(chalk.blue(`\n  ⟳ ${name}`) + chalk.gray(` ${summary}\n`));
-    },
-    onToolResult: (name) => {
-      process.stderr.write(chalk.green(`  ✓ ${name}\n`));
-    },
-    onError: (err) => {
-      log.error(err);
-      process.stderr.write(chalk.red(`\n❌ ${err.message}\n`));
-    },
-  });
+  try {
+    await runAgent(request, {
+      definition: def,
+      onPlan: () => {},
+      onThinking: () => {},
+      onText: (t) => process.stdout.write(t),
+      onToolCall: (name, args) => {
+        const summary = Object.entries(args || {})
+          .map(([k, v]) => `${k}=${String(v).slice(0, 30)}`)
+          .join(", ");
+        process.stderr.write(chalk.blue(`\n  ⟳ ${name}`) + chalk.gray(` ${summary}\n`));
+      },
+      onToolResult: (name) => {
+        process.stderr.write(chalk.green(`  ✓ ${name}\n`));
+      },
+      onError: (err) => {
+        log.error(err);
+        process.stderr.write(chalk.red(`\n❌ ${err.message}\n`));
+      },
+    });
+  } finally {
+    await shutdownMcp().catch(() => {});
+  }
 
-  const endCost = globalTracker.getStats(def.model || loadConfig().model).cost.total;
+  const endCost = globalTracker.getStats(def.model || config.model).cost.total;
   process.stderr.write(
     chalk.dim(
       `\n⏱ ${formatDuration(Date.now() - startMs)} │ 💰 $${(endCost - startCost).toFixed(6)}\n`
@@ -184,19 +266,38 @@ async function runOneShotAgent(agentName, request) {
 }
 
 // ===========================
-// 🚀 ENTRY — Hybrid TUI / Readline / One-shot
+// 🚀 ENTRY — fast-path argv parsing
 // ===========================
 async function main() {
-  loadGlobalEnv();
-  const config = loadConfig();
+  const argv = process.argv;
 
-  // One-shot agent mode: `myagent --agent analyzer "audit src/"`
-  const agentFlagIdx = process.argv.indexOf("--agent");
+  // ─── Instant info commands (no env load, no config load) ─────────────
+  if (argv.includes("--help") || argv.includes("-h")) {
+    showHelp();
+    process.exit(0);
+  }
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(getPackageVersion());
+    process.exit(0);
+  }
+
+  loadGlobalEnv();
+
+  // ─── Setup wizard: `myagent --init` ─────────────────────────────────
+  if (argv.includes("--init")) {
+    const { runInit } = await import("../src/commands/init.js");
+    const force = argv.includes("--force");
+    const nonInteractive = argv.includes("--yes") || argv.includes("-y");
+    await runInit({ force, nonInteractive });
+    process.exit(0);
+  }
+
+  // ─── One-shot agent mode ────────────────────────────────────────────
+  const agentFlagIdx = argv.indexOf("--agent");
   if (agentFlagIdx >= 0) {
-    // Side-effect import to ensure registry is populated.
-    await import("../src/core/agents/index.js");
-    const agentName = process.argv[agentFlagIdx + 1];
+    const agentName = argv[agentFlagIdx + 1];
     if (!agentName || agentName.startsWith("-")) {
+      const { listAgents } = await import("../src/core/agents/index.js");
       console.error(chalk.red("Usage: myagent --agent <name> [request...]"));
       console.error(chalk.dim("Available agents:"));
       for (const a of listAgents()) {
@@ -204,40 +305,20 @@ async function main() {
       }
       process.exit(1);
     }
-    const request = process.argv.slice(agentFlagIdx + 2).join(" ").trim() || ".";
-
-    // Need provider key
-    let def;
-    try {
-      def = getAgent(agentName);
-    } catch (err) {
-      console.error(chalk.red(`❌ ${err.message}`));
-      process.exit(1);
-    }
-    const providerName = def.provider || config.provider;
-    const { envVar } = getProviderApiKeySpec(providerName);
-    if (!process.env[envVar]) {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      await setupApiKey(rl, providerName);
-      rl.close();
-    }
-
-    try {
-      await runOneShotAgent(agentName, request);
-    } finally {
-      await shutdownMcp().catch(() => {});
-    }
+    const request = argv.slice(agentFlagIdx + 2).join(" ").trim() || ".";
+    await runOneShotAgent(agentName, request);
     process.exit(0);
   }
 
+  // ─── Interactive (default) ──────────────────────────────────────────
+  const config = loadConfig();
   const { envVar } = getProviderApiKeySpec(config.provider);
-  const forceTui = process.argv.includes("--tui");
+  const forceTui = argv.includes("--tui");
   const forceReadline =
-    process.argv.includes("--no-tui") ||
+    argv.includes("--no-tui") ||
     process.env.MYAGENT_NO_TUI === "1";
   const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
-  // Need a key before anything else — use a tiny readline just for that.
   if (!process.env[envVar]) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     await setupApiKey(rl, config.provider);

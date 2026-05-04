@@ -1,36 +1,49 @@
-import { GeminiProvider } from "./gemini.js";
-import { OpenAIProvider } from "./openai.js";
-import { AnthropicProvider } from "./anthropic.js";
 import { ProviderError } from "./base.js";
 
 // Provider instances are cached per-name so we don't re-instantiate on every call.
 const _cache = new Map();
 
-export function getProvider(name) {
+// Module-level lazy loaders. Each provider's heavy SDK is only imported on the
+// first call to getProvider("<name>"), saving ~200ms of cold start when a user
+// only ever uses one provider (the common case).
+const _loaders = {
+  gemini: async () => {
+    const { GeminiProvider } = await import("./gemini.js");
+    return new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY });
+  },
+  openai: async () => {
+    const { OpenAIProvider } = await import("./openai.js");
+    return new OpenAIProvider({
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
+    });
+  },
+  anthropic: async () => {
+    const { AnthropicProvider } = await import("./anthropic.js");
+    return new AnthropicProvider({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      baseURL: process.env.ANTHROPIC_BASE_URL,
+    });
+  },
+};
+
+// Alias claude → anthropic
+_loaders.claude = _loaders.anthropic;
+
+/**
+ * Resolve a provider instance by name. Async so the underlying SDK can be
+ * lazy-imported on first use. Subsequent calls hit the in-memory cache.
+ *
+ * @param {string} name  one of "gemini" | "openai" | "anthropic" | "claude"
+ * @returns {Promise<object>} provider instance
+ */
+export async function getProvider(name) {
   if (_cache.has(name)) return _cache.get(name);
-
-  let provider;
-  switch (name) {
-    case "gemini":
-      provider = new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY });
-      break;
-    case "openai":
-      provider = new OpenAIProvider({
-        apiKey: process.env.OPENAI_API_KEY,
-        baseURL: process.env.OPENAI_BASE_URL,
-      });
-      break;
-    case "anthropic":
-    case "claude":
-      provider = new AnthropicProvider({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-        baseURL: process.env.ANTHROPIC_BASE_URL,
-      });
-      break;
-    default:
-      throw new ProviderError(`Unknown provider: '${name}'. Valid: gemini, openai, anthropic`);
+  const loader = _loaders[name];
+  if (!loader) {
+    throw new ProviderError(`Unknown provider: '${name}'. Valid: gemini, openai, anthropic`);
   }
-
+  const provider = await loader();
   _cache.set(name, provider);
   return provider;
 }
@@ -48,7 +61,11 @@ export function _registerProviderForTests(name, instance) {
   _cache.set(name, instance);
 }
 
-// Infer provider from a model id for /model shortcuts like "gpt-4o" or "claude-3-5-sonnet-latest".
+/**
+ * Best-effort detection of which provider owns a given model identifier.
+ * Returns null when the model doesn't match any known prefix — caller can
+ * fall back to config.provider.
+ */
 export function inferProvider(modelId) {
   if (!modelId) return null;
   const m = modelId.toLowerCase();

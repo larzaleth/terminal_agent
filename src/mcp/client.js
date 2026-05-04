@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { loadConfig } from "../config/config.js";
+import { log } from "../utils/logger.js";
+import { getPackageVersion } from "../utils/version.js";
 
 // ─── Connection lifecycle ───────────────────────────────────────────
 const _clients = new Map();   // serverName → Client
@@ -33,7 +35,7 @@ export async function initMcp() {
         args: spec.args || [],
         env: { ...process.env, ...(spec.env || {}) },
       });
-      const client = new Client({ name: "ai-coding-agent", version: "2.3.0" }, { capabilities: {} });
+      const client = new Client({ name: "ai-coding-agent", version: getPackageVersion() }, { capabilities: {} });
       await client.connect(transport);
       _clients.set(name, client);
 
@@ -52,9 +54,9 @@ export async function initMcp() {
         });
       }
 
-      console.log(`🔌 MCP connected: ${name} (${toolsResp.tools?.length ?? 0} tools)`);
+      log.info(`🔌 MCP connected: ${name} (${toolsResp.tools?.length ?? 0} tools)`);
     } catch (err) {
-      console.warn(`⚠️ MCP server '${name}' failed to connect: ${err.message}`);
+      log.warn(`⚠️ MCP server '${name}' failed to connect: ${err.message}`);
     }
   }
 }
@@ -115,7 +117,7 @@ export async function shutdownMcp() {
     try {
       // Don't let a single stuck MCP server block the whole app from exiting
       await Promise.race([client.close(), timeout(1000)]);
-      console.log(`🔌 MCP disconnected: ${name}`);
+      log.info(`🔌 MCP disconnected: ${name}`);
     } catch {
       /* best-effort */
     }

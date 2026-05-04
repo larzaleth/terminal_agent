@@ -57,9 +57,10 @@ export function classifyCommand(cmd) {
     }
   }
 
-  // Redirection or piping — play it safe, but allow safe filters/selectors for PowerShell/Unix reads
-  const safeFilters = /\|\s*(Select-Object|Select-String|Where-Object|Expand-Property|Out-String|grep|head|tail|wc|sort|uniq|Skip|First|Last)/i;
-  const hasPipeOrChain = /[;&]|&&|\|\|/.test(cmd) || (cmd.includes("|") && !safeFilters.test(cmd));
+  // Any pipe, redirect, or chain operator → require user confirmation.
+  // Even seemingly-safe filters (`ls | grep`) can mask intent or be combined
+  // with destructive ops downstream — being strict here is the right tradeoff.
+  const hasPipeOrChain = /[|;&]/.test(cmd);
   if (hasPipeOrChain || />\s*\/dev\//.test(cmd)) {
     return { verdict: "confirm", reason: "Contains potentially unsafe pipe/redirect/chain" };
   }

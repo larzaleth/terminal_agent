@@ -116,6 +116,28 @@ export class GeminiProvider {
 
   async embed(text, model = "text-embedding-004") {
     const res = await this.client.models.embedContent({ model, contents: text });
-    return res.embedding.values;
+    // SDK 1.51+ returns { embeddings: [{values}] }; older returns { embedding: { values } }
+    const vec = res.embeddings?.[0]?.values || res.embedding?.values;
+    if (!vec) throw new ProviderError("Gemini embed: empty response", { provider: "gemini" });
+    return vec;
+  }
+
+  /**
+   * Batch embed multiple texts in a single API call.
+   * @param {string[]} texts
+   * @param {string} model
+   * @returns {Promise<number[][]>} Array of vectors in the same order as inputs.
+   */
+  async embedBatch(texts, model = "text-embedding-004") {
+    if (!Array.isArray(texts) || texts.length === 0) return [];
+    const res = await this.client.models.embedContent({ model, contents: texts });
+    const list = res.embeddings;
+    if (!Array.isArray(list) || list.length !== texts.length) {
+      throw new ProviderError(
+        `Gemini embedBatch: expected ${texts.length} vectors, got ${list?.length ?? 0}`,
+        { provider: "gemini" }
+      );
+    }
+    return list.map((e) => e.values);
   }
 }

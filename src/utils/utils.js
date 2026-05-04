@@ -163,12 +163,13 @@ export function wordCount(text) {
 }
 
 /**
- * Rough estimation of token count: ~4 chars per token.
- * Used for adaptive context window management.
+ * Rough estimation of token count.
+ * - default ratio 4 (conservative, used for context-window thresholds)
+ * - cost-tracker uses ratio 3.5 (closer to real billed tokens for OpenAI/Gemini)
  */
-export function estimateTokens(text) {
+export function estimateTokens(text, charsPerToken = 4) {
   if (!text || typeof text !== "string") return 0;
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / charsPerToken);
 }
 
 export async function writeFileAtomic(filePath, content) {

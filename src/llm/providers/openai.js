@@ -112,4 +112,24 @@ export class OpenAIProvider {
     const res = await this.client.embeddings.create({ model, input: text });
     return res.data[0].embedding;
   }
+
+  /**
+   * Batch embed multiple texts in a single API call.
+   * @param {string[]} texts
+   * @param {string} model
+   * @returns {Promise<number[][]>} Array of vectors in the same order as inputs.
+   */
+  async embedBatch(texts, model = "text-embedding-3-small") {
+    if (!Array.isArray(texts) || texts.length === 0) return [];
+    const res = await this.client.embeddings.create({ model, input: texts });
+    if (!Array.isArray(res.data) || res.data.length !== texts.length) {
+      throw new ProviderError(
+        `OpenAI embedBatch: expected ${texts.length} vectors, got ${res.data?.length ?? 0}`,
+        { provider: "openai" }
+      );
+    }
+    // OpenAI guarantees order via `data[i].index` but typically returns sorted.
+    const sorted = [...res.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    return sorted.map((d) => d.embedding);
+  }
 }

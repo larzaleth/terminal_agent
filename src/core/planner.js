@@ -1,6 +1,7 @@
 import { getProvider } from "../llm/providers/index.js";
 import { loadConfig } from "../config/config.js";
 import { wordCount } from "../utils/utils.js";
+import { log } from "../utils/logger.js";
 import { PLANNER_MIN_WORDS } from "../config/constants.js";
 
 /**
@@ -31,7 +32,7 @@ export async function createPlan(userInput, memory = []) {
   }
 
   try {
-    const provider = getProvider(config.provider || "gemini");
+    const provider = await getProvider(config.provider || "gemini");
     const text = await provider.generate({
       model: config.plannerModel,
       prompt: `Analyze this coding task and create a brief step-by-step plan (3-6 steps max).
@@ -53,7 +54,7 @@ Actions can be: "explore", "analyze", "implement", "test", "respond"`,
       if (Array.isArray(plan) && plan.length > 0) return plan;
     }
   } catch (err) {
-    console.log(`⚠️ Planner fallback: ${err.message}`);
+    log.warn(`Planner fallback: ${err.message}`);
   }
 
   // Fallback plans based on mode

@@ -95,7 +95,8 @@ export function clearMemory() {
 // ===========================
 async function summarizeMemory(memory, signal) {
   const config = loadConfig();
-  const recentCount = Math.min(memory.length > 5 ? 5 : 2, 10);
+  // Keep last 5 messages when memory has more than 5, otherwise keep last 2.
+  const recentCount = memory.length > 5 ? 5 : 2;
   const oldMessages = memory.slice(0, -recentCount);
   const recentMessages = memory.slice(-recentCount);
 
@@ -119,7 +120,7 @@ async function summarizeMemory(memory, signal) {
   }
 
   try {
-    const provider = getProvider(config.provider || "gemini");
+    const provider = await getProvider(config.provider || "gemini");
     const prompt = `Summarize this conversation history into a concise context paragraph.
 Focus on: what was the original goal, what specific files were modified and what changes were made, what is the current progress, what steps are remaining, and any important patterns or conventions discovered.
 

@@ -5,13 +5,16 @@ import { loadConfig, findConfigPath } from "../../config/config.js";
 
 export async function yoloCommand(args) {
   const config = loadConfig();
-  
-  if (args === "on" || args === "true" || args === "1") {
+
+  // `args` is always an array (slash router splits the command).
+  const flag = (Array.isArray(args) ? args[0] : args)?.toLowerCase();
+
+  if (flag === "on" || flag === "true" || flag === "1") {
     config.autoApprove = true;
-  } else if (args === "off" || args === "false" || args === "0") {
+  } else if (flag === "off" || flag === "false" || flag === "0") {
     config.autoApprove = false;
   } else {
-    // Toggle
+    // Toggle when no explicit value is given
     config.autoApprove = !config.autoApprove;
   }
   

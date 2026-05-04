@@ -118,4 +118,11 @@ export class AnthropicProvider {
       { provider: "anthropic" }
     );
   }
+
+  async embedBatch() {
+    throw new ProviderError(
+      "Anthropic has no embedding API. Set embeddingProvider to 'gemini' or 'openai' in agent.config.json.",
+      { provider: "anthropic" }
+    );
+  }
 }

@@ -10,8 +10,15 @@ export async function indexCommand(args) {
   }
   const spinner = ora("Building semantic index...").start();
   try {
-    await buildIndex(folder);
-    spinner.succeed(chalk.green("Index built successfully."));
+    const stats = await buildIndex(folder);
+    if (stats && typeof stats === "object") {
+      const { successfulChunks = 0, failedChunks = 0, files = 0 } = stats;
+      const detail = `${successfulChunks} chunks from ${files} files` +
+        (failedChunks > 0 ? `, ${failedChunks} failed` : "");
+      spinner.succeed(chalk.green(`Index built: ${detail}`));
+    } else {
+      spinner.succeed(chalk.green("Index built successfully."));
+    }
   } catch (err) {
     spinner.fail(chalk.red(`Index failed: ${err.message}`));
   }
