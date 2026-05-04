@@ -1,6 +1,4 @@
-// Pluggable prompter interface — abstracts user confirmation away from any
-// specific UI. Default implementation uses readline (legacy REPL mode).
-// The Ink TUI swaps in its own implementation via `setPrompter()`.
+// Pluggable confirmation interface for the plain CLI.
 
 import readline from "readline/promises";
 import { renderDiff, diffStats } from "../tools/diff.js";
@@ -15,9 +13,9 @@ async function readlineConfirm({ message }) {
 async function readlineEditApproval({ filePath, oldContent, newContent }) {
   console.log(renderDiff(oldContent, newContent, filePath));
   const { added, removed } = diffStats(oldContent, newContent);
-  console.log(`   📊 +${added} / -${removed} lines`);
+  console.log(`   Change: +${added} / -${removed} lines`);
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(`Apply this change? (Y/n/e=edit manually) > `);
+  const answer = await rl.question("Apply this change? (Y/n/e=edit manually) > ");
   rl.close();
   const a = answer.trim().toLowerCase();
   if (a === "n") return { decision: "reject" };

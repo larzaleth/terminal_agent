@@ -10,7 +10,6 @@ import {
   COMMAND_MAX_BUFFER,
   MAX_COMMAND_OUTPUT_CHARS,
 } from "../config/constants.js";
-import { emitToolStream, hasToolStreamCallback } from "../ui/toolStream.js";
 
 const TOOL_ERROR_PREFIX = "\u274c";
 const TOOL_CANCEL_PREFIX = "\u{1f6ab}";
@@ -66,8 +65,7 @@ export function runWithSpawn(cmd, options = {}) {
       const next = appendBoundedBuffer(stdoutBuf, text, COMMAND_MAX_BUFFER);
       stdoutDropped += stdoutBuf.length + text.length - next.length;
       stdoutBuf = next;
-      if (hasToolStreamCallback()) emitToolStream("run_command", text);
-      else process.stdout.write(text);
+      process.stdout.write(text);
     });
 
     child.stderr.on("data", (chunk) => {
@@ -75,8 +73,7 @@ export function runWithSpawn(cmd, options = {}) {
       const next = appendBoundedBuffer(stderrBuf, text, COMMAND_MAX_BUFFER);
       stderrDropped += stderrBuf.length + text.length - next.length;
       stderrBuf = next;
-      if (hasToolStreamCallback()) emitToolStream("run_command", text);
-      else process.stderr.write(text);
+      process.stderr.write(text);
     });
 
     child.on("error", (err) => {

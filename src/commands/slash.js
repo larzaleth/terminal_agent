@@ -17,7 +17,6 @@ import { modelCommand } from "./handlers/model.js";
 import { providerCommand } from "./handlers/provider.js";
 import { saveCommand } from "./handlers/save.js";
 import { mcpCommand } from "./handlers/mcp.js";
-import { copyCommand } from "./handlers/copy.js";
 import { undoCommand } from "./handlers/undo.js";
 import { sessionCommand } from "./handlers/session.js";
 import { agentCommand } from "./handlers/agent.js";
@@ -40,7 +39,6 @@ const HANDLERS = {
   "/save": saveCommand,
   "/list": () => sessionCommand(["list"]),
   "/mcp": mcpCommand,
-  "/copy": copyCommand,
   "/undo": undoCommand,
   "/session": sessionCommand,
   "/resume": (args) => sessionCommand(["resume", ...args]),

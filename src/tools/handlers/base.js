@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import { loadConfig } from "../../config/config.js";
-import { getPrompter } from "../../ui/prompter.js";
+import { getPrompter } from "../../core/prompter.js";
 
 /**
  * Check if a file or directory exists.

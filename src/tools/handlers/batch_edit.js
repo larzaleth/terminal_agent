@@ -3,7 +3,7 @@ import { isSafePath } from "../../utils/utils.js";
 import { updateIndex } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
-import { getPrompter } from "../../ui/prompter.js";
+import { getPrompter } from "../../core/prompter.js";
 import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
 import { loadConfig } from "../../config/config.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
