@@ -3,30 +3,10 @@ import { isSafePath } from "../../utils/utils.js";
 import { scheduleIndexUpdate } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-import { getPrompter } from "../../ui/prompter.js";
-import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
-import { loadConfig } from "../../config/config.js";
->>>>>>> parent of f112c8a (remove tui)
-=======
 import { getPrompter } from "../../core/prompter.js";
 import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
 import { loadConfig } from "../../config/config.js";
->>>>>>> parent of 88b6128 (continue cleaning up the tui)
-=======
-import { getPrompter } from "../../core/prompter.js";
-import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
-import { loadConfig } from "../../config/config.js";
->>>>>>> parent of 88b6128 (continue cleaning up the tui)
-=======
-import { getPrompter } from "../../core/prompter.js";
-import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
-import { loadConfig } from "../../config/config.js";
->>>>>>> parent of 88b6128 (continue cleaning up the tui)
+
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath, target, replacement }) {
@@ -41,13 +21,13 @@ export default async function ({ path: filePath, target, replacement }) {
     }
 
     const content = await fs.readFile(filePath, "utf-8");
-    
+
     // P0: Check for multiple occurrences
     const occurrences = content.split(target).length - 1;
     if (occurrences === 0) {
       return `❌ Error: Target string not found in '${filePath}'.\n💡 Tip: Use read_file first to verify the exact content including whitespace.`;
     }
-    
+
     if (occurrences > 1) {
       return `❌ Error: Target string found ${occurrences} times in '${filePath}'.\n💡 Tip: Provide a more unique target string (include surrounding lines) to ensure the correct part is edited.`;
     }
@@ -58,7 +38,7 @@ export default async function ({ path: filePath, target, replacement }) {
     // Show the diff preview (unless auto-approved via env var, non-TTY, or very small change).
     const autoApprove =
       cfg.autoApprove ||
-      process.env[DIFF_AUTO_APPROVE_ENV] === "1" || 
+      process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
       !process.stdin.isTTY ||
       (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)
     if (!autoApprove) {
