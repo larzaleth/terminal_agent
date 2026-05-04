@@ -24,7 +24,7 @@ export default async function ({ pattern, dir = ".", include, isRegex = false })
     }
     if (rgResult) {
       if (rgResult.matches.length === 0) {
-        return `❌ No matches found for '${pattern}'${include ? ` in files matching '${include}'` : ""}.`;
+        return `ℹ️ No matches found for '${pattern}'${include ? ` in files matching '${include}'` : ""}.`;
       }
 
       let result = `✅ Found ${rgResult.matches.length} matches:\n\n${rgResult.matches.join("\n")}`;
@@ -45,7 +45,7 @@ export default async function ({ pattern, dir = ".", include, isRegex = false })
       return `❌ No files found in '${dir}'${include ? ` matching '${include}'` : ""}.`;
     }
     if (fallbackResult.matches.length === 0) {
-      return `❌ No matches found for '${pattern}' in ${fallbackResult.filesScanned} files.`;
+      return `ℹ️ No matches found for '${pattern}' in ${fallbackResult.filesScanned} files.`;
     }
 
     let result = `✅ Found ${fallbackResult.matches.length} matches:\n\n${fallbackResult.matches.join("\n")}`;

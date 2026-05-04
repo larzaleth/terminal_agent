@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import { isSafePath } from "../../utils/utils.js";
 import { updateIndex } from "../../rag/semantic.js";
+import { loadConfig } from "../../config/config.js";
 import { exists, confirmExecution, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath }) {
@@ -13,8 +14,11 @@ export default async function ({ path: filePath }) {
       return `❌ Error: '${filePath}' is a directory.\n💡 Tip: Use rm -rf via run_command (caution advised).`;
     }
 
-    const ok = await confirmExecution(`Delete ${filePath}?`, "destructive");
-    if (!ok) return "🚫 Cancelled: Deletion denied by user.";
+    const { autoApprove } = loadConfig();
+    if (!autoApprove) {
+      const ok = await confirmExecution(`Delete ${filePath}?`, "destructive");
+      if (!ok) return "🚫 Cancelled: Deletion denied by user.";
+    }
 
     await fs.unlink(filePath);
     await updateIndex(filePath);

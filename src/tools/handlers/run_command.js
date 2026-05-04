@@ -1,5 +1,6 @@
 import { classifyCommand } from "../command-classifier.js";
 import { runWithSpawn } from "../shell-runner.js";
+import { loadConfig } from "../../config/config.js";
 import { confirmExecution } from "./base.js";
 
 export default async function ({ cmd }) {
@@ -12,9 +13,12 @@ export default async function ({ cmd }) {
   }
 
   if (verdict === "confirm") {
-    const ok = await confirmExecution(cmd, reason);
-    if (!ok) {
-      return "🚫 Cancelled: User denied permission to run command.";
+    const { autoApprove } = loadConfig();
+    if (!autoApprove) {
+      const ok = await confirmExecution(cmd, reason);
+      if (!ok) {
+        return "🚫 Cancelled: User denied permission to run command.";
+      }
     }
   }
 

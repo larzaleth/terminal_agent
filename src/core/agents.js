@@ -14,6 +14,9 @@ import { log } from "../utils/logger.js";
 
 const LOOP_WINDOW = 10;        // only look at the last N tool calls for dupe detection
 const LOOP_DUPE_LIMIT = 5;    // same signature ≥ this many times within window → stop
+const FILE_READ_WARN = 6;      // warn agent after N reads of the same file
+const FILE_READ_HARD_LIMIT = 15; // block further reads of that file (but don't stop agent)
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "replace_lines", "batch_edit"]);
 
 /**
  * @typedef {Object} AgentRunOptions
@@ -144,6 +147,7 @@ export async function runAgent(userInput, callbacks = {}) {
   let iterations = 0;
   const recentSignatures = [];     // sliding window of recent tool call signatures
   let consecutiveFailures = 0;
+  const fileReadCounts = new Map();  // track how many times each file has been read
 
   while (!isDone && iterations < runtime.maxIterations) {
     if (signal?.aborted) {
@@ -231,6 +235,51 @@ export async function runAgent(userInput, callbacks = {}) {
     const counts = new Map();
     for (const sig of recentSignatures) counts.set(sig, (counts.get(sig) || 0) + 1);
     const mostRepeated = Math.max(0, ...counts.values());
+
+    // ─── SAME-FILE/DIR READ DETECTION ─────────────────────────────────────
+    // Catches the pattern where agent reads the same file with different
+    // line ranges, or lists the same directory repeatedly.
+    for (const tc of toolCalls) {
+      // Reset read counters when agent makes successful writes (= progress)
+      if (WRITE_TOOLS.has(tc.name)) {
+        fileReadCounts.clear();
+        continue;
+      }
+      const trackedPath = (tc.name === "read_file" && tc.args?.path)
+        || (tc.name === "list_dir" && tc.args?.dir);
+      if (trackedPath) {
+        const p = String(trackedPath);
+        const c = (fileReadCounts.get(p) || 0) + 1;
+        fileReadCounts.set(p, c);
+        if (c === FILE_READ_WARN) {
+          const action = tc.name === "read_file" ? "read" : "listed";
+          memory.push({
+            role: "tool",
+            blocks: [{
+              type: "tool_result",
+              id: "file_read_warn",
+              name: "system",
+              output: `⚠️ EFFICIENCY WARNING: You have ${action} '${p}' ${c} times. STOP. Use the information you already have. Remember: 'write_file' auto-creates parent directories, so you do NOT need to check if directories exist. Just write files directly.`,
+            }],
+          });
+        }
+      }
+    }
+    // Check if any file has been read too many times → inject warning but DON'T stop agent
+    const maxFileReads = Math.max(0, ...fileReadCounts.values());
+    if (maxFileReads >= FILE_READ_HARD_LIMIT) {
+      // Find which file(s) hit the limit
+      const overreadFiles = [...fileReadCounts.entries()].filter(([, c]) => c >= FILE_READ_HARD_LIMIT).map(([f]) => f);
+      memory.push({
+        role: "tool",
+        blocks: [{
+          type: "tool_result",
+          id: "file_read_block",
+          name: "system",
+          output: `🛑 READ LIMIT: You have read these files/dirs too many times: ${overreadFiles.join(", ")}. You MUST stop reading them and work with what you have. Use write_file and replace_lines to make progress. Do NOT read these paths again.`,
+        }],
+      });
+    }
 
     let wasForcedToStop = false;
     if (mostRepeated >= LOOP_DUPE_LIMIT || consecutiveFailures >= 3) {

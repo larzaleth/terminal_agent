@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ---
 
+## [2.6.0] — 2026-05-04
+
+### Added
+- **Intelligent Loop Detection**: Added `same-file read counter` with write-progress reset. Counter tracks repeated reads of the same file/dir, warns at 6, soft-blocks at 15. Counter resets when agent makes successful writes (write_file, edit_file, replace_lines, batch_edit) — so productive work never gets penalized. Hard limit no longer force-stops the agent; it only blocks further reads of that specific file.
+- **Mega-File Refactoring Strategy**: New system prompt section for handling 1000+ line files with a strict "Extract-then-Delete" workflow. Includes resume-awareness: agent checks which target files already exist before extracting, skips writes for existing files, and focuses on deleting from source.
+- **PowerShell Compatibility Tips**: Added explicit instructions for PowerShell `mkdir`, `grep` (Select-String), and `list_dir` to prevent common Windows pitfalls.
+
+### Fixed
+- **YOLO Mode (autoApprove)**: Fixed `run_command` and `delete_file` handlers not correctly bypassing confirmation prompts when YOLO mode is active.
+- **Robust Config Loading**: `loadConfig` now searches upwards for `agent.config.json`, preventing issues when the agent runs in a subdirectory.
+- **Command Classification**: Added `mkdir` and `New-Item` to `AUTO_ALLOWED` list for smoother directory creation.
+- **Directory Pre-check Elimination**: Agent no longer wastes iterations checking if target directories exist before writing — `write_file` auto-creates parent dirs. System prompt explicitly forbids `list_dir` spam and manual mkdir instructions.
+- **False Failure Detection**: `grep_search` "no matches" result no longer triggers failure counter. Changed prefix from ❌ to ℹ️ since it's an informational result, not a tool error.
+- **Anti-Hallucination Rules**: Agent is now explicitly forbidden from inventing component names or searching for files it hasn't seen in `read_file` output.
+- **Tool Usage Clarification**: Added strict rules to prevent using `batch_edit` or `edit_file` for new files, ensuring `write_file` is used instead.
+
 ## [2.5.1] — 2026-05-04
 
 ### Changed

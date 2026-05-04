@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import chalk from "chalk";
-import { loadConfig } from "../../config/config.js";
+import { loadConfig, findConfigPath } from "../../config/config.js";
 
 export async function yoloCommand(args) {
   const config = loadConfig();
@@ -17,7 +17,7 @@ export async function yoloCommand(args) {
   
   // Persist to agent.config.json
   try {
-    const configPath = path.join(process.cwd(), "agent.config.json");
+    const configPath = findConfigPath();
     let currentFileConfig = {};
     try {
       const raw = await fs.readFile(configPath, "utf-8");

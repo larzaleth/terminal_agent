@@ -57,17 +57,30 @@ export function getSystemPrompt() {
 // ===========================
 let _cachedConfig = null;
 
+export function findConfigPath() {
+  let curr = process.cwd();
+  // Search upwards for agent.config.json (max 5 levels)
+  for (let i = 0; i < 5; i++) {
+    const p = path.join(curr, "agent.config.json");
+    if (fs.existsSync(p)) return p;
+    const parent = path.dirname(curr);
+    if (parent === curr) break;
+    curr = parent;
+  }
+  return path.join(process.cwd(), "agent.config.json");
+}
+
 export function loadConfig(forceReload = false) {
   if (_cachedConfig && !forceReload) return _cachedConfig;
 
-  const customConfigPath = path.join(process.cwd(), "agent.config.json");
+  const customConfigPath = findConfigPath();
 
   if (fs.existsSync(customConfigPath)) {
     try {
       const customConfig = JSON.parse(fs.readFileSync(customConfigPath, "utf-8"));
       _cachedConfig = { ...defaultConfig, ...customConfig };
     } catch (err) {
-      console.warn(`⚠️ Failed to read agent.config.json: ${err.message}. Using defaults.`);
+      console.warn(`⚠️ Failed to read agent.config.json at ${customConfigPath}: ${err.message}. Using defaults.`);
       _cachedConfig = { ...defaultConfig };
     }
   } else {

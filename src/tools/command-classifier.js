@@ -29,7 +29,7 @@ const AUTO_ALLOWED = new Set([
   "git", "npm", "yarn", "pnpm", "pip", "pip3",
   "jest", "vitest", "pytest", "tsc", "eslint", "prettier", "ruff",
   "rg", "grep", "fgrep", "egrep", "diff", "sort", "uniq",
-  "powershell", "pwsh", "Get-Content", "Select-String", "Get-ChildItem", "Get-Item", "Test-Path"
+  "powershell", "pwsh", "Get-Content", "Select-String", "Get-ChildItem", "Get-Item", "Test-Path", "mkdir", "New-Item"
 ]);
 
 const FORCE_CONFIRM_COMMANDS = new Set([
