@@ -189,7 +189,7 @@ test("reviewer agent never has write tools", () => {
 |---|---|---|
 | `default` ✅ | all | classic full-capability agent |
 | `analyzer` ✅ | read-only | audit codebase, emit prioritized task list |
-| `refactorer` ✅ | local read/write + validation shell | mechanical refactors with backup-protected edits |
+| `refactorer` ✅ | local read/write + validation shell | mechanical refactors with diff preview |
 | `reviewer` | read + git-only shell | PR / last-commit reviewer |
 | `test-writer` | read + write (tests/*) + npm test | auto-generate tests |
 | `docs-generator` | read + write (docs/*) | auto-docs from JSDoc |

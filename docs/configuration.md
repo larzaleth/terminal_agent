@@ -92,6 +92,7 @@ Stored in `~/.myagent.env` (auto-created on first run) or `./.env` (project-loca
 | `MYAGENT_EMBEDDING_MODEL` | Session-only override for `embeddingModel` | No |
 | `MYAGENT_WINDOWS_SHELL` | Set to `cmd` to force `run_command` to use Command Prompt on Windows | No |
 | `MYAGENT_POWERSHELL_PATH` | Override the PowerShell executable used by `run_command` on Windows | No |
+| `MYAGENT_AUTO_APPROVE_EDITS` | Set `1` to skip diff preview confirmation | No |
 
 Example `~/.myagent.env`:
 

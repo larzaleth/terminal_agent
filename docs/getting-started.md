@@ -1,106 +1,197 @@
 # Getting Started
 
-This guide gets `myagent` running locally and shows the most common workflows.
-
 ## Requirements
 
-- Node.js 18 or newer
-- npm
-- At least one provider API key
+- **Node.js ≥ 18** (ESM + `fs/promises` required)
+- **Yarn** or npm
+- A **Gemini API key** — free tier available at [aistudio.google.com](https://aistudio.google.com/app/apikey)
+- _(Optional)_ OpenAI / Anthropic keys if you want to use those providers
 
-## Install
+Verify your Node version:
 
 ```bash
-git clone <repo>
+node --version
+# v18.0.0 or higher
+```
+
+## Installation
+
+### Option 1: Global install via `npm link` (recommended for development)
+
+```bash
+git clone <repo-url> ai-coding-agent
 cd ai-coding-agent
-npm install
+yarn install
 npm link
 ```
 
-Run:
+After `npm link` you can run `myagent` from anywhere.
+
+### Option 2: Local run
 
 ```bash
+cd ai-coding-agent
+yarn install
+yarn start
+```
+
+### Option 3: One-off via `npx`
+
+```bash
+npx . # from inside the repo directory
+```
+
+## First Run
+
+### Option A: interactive prompt (default)
+
+The first time you execute `myagent`, it prompts for your Gemini API key:
+
+```
+👋 Welcome to AI Coding Agent!
+
+🔑 Enter Gemini API Key (get it at https://aistudio.google.com): AIzaSy...
+
+✅ API Key saved to /home/you/.myagent.env
+```
+
+The key is saved with `0o600` permissions. Subsequent runs auto-load it.
+
+### Option B: `.env` file (recommended for multi-provider setups)
+
+```bash
+cp .env.example .env
+$EDITOR .env        # paste your key(s)
 myagent
 ```
 
-First run asks for a Gemini API key and stores it in `~/.myagent.env`.
+See [`/app/.env.example`](../.env.example) for all supported variables (providers, model overrides, behavior flags).
 
-## Basic Session
+> ⚠️ **If you see `403 — API key was reported as leaked`:** Google auto-revokes keys detected in public places (GitHub commits, public logs, pastes).
+> - Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+> - Delete the leaked key and create a new one
+> - Update `~/.myagent.env` (or `.env`) with the new key
+> - There is no way to un-revoke a leaked key
 
-```text
-> /index .
-> Refactor src/utils.js to use async/await
-> /model claude-3-5-haiku-latest
-> /save session.md
+### Set model & provider per-project
+
+If a folder has its own `.env` with `MYAGENT_MODEL` / `MYAGENT_PROVIDER`, those override `agent.config.json` for that session only:
+
+```env
+# .env in your project
+MYAGENT_PROVIDER=anthropic
+MYAGENT_MODEL=claude-3-5-haiku-latest
+```
+
+## Your First Session
+
+```
+╔══════════════════════════════════════╗
+║     🤖 AI Coding Agent v2.3        ║
+║     Powered by Gemini               ║
+╚══════════════════════════════════════╝
+  Type your request, or use commands:
+  /help  /clear  /index <folder>  /config  exit
+
+🧑 > hello
+🤖 Hello! I'm an AI coding agent running in your terminal. I can help you
+read, write, search, and edit code, run shell commands, and more.
+
+What would you like to work on?
+
+⏱️  Done in 1.4s
+💰 $0.000023 | 📊 85 tokens | 💾 0.0% cache hit
+
+🧑 >
 ```
 
 ## Common Workflows
 
-### Index a project
+### 1. Understand a codebase
 
-```text
-> /index .
+```
+🧑 > /index /path/to/project
+🚀 Starting batch indexing for 47 files...
+✅ Index saved with 312 embeddings in 8.3s
+
+🧑 > What does the authentication middleware do?
 ```
 
-The semantic index is stored as `index.json`; cached embeddings live in `.agent_cache/`.
+The agent will now use the semantic index to find relevant files and answer with context.
 
-### Refactor a file
+### 2. Refactor a file
 
-```text
-> Refactor src/utils.js to use async/await instead of callbacks
+```
+🧑 > Refactor src/utils.js to use async/await instead of callbacks
 
-PLAN:
+📋 PLAN:
   1. Read src/utils.js to understand current structure
   2. Identify callback patterns that need converting
   3. Rewrite functions using async/await
-  4. Apply the edit with backup protection
+  4. Show diff preview before applying
 
-read_file(src/utils.js)
+🔧 read_file(src/utils.js)
 ...
-Success: Edited src/utils.js
+✏️ [edit_file] src/utils.js
+--- src/utils.js (before)
++++ src/utils.js (after)
+- function fetchData(url, callback) {
+-   http.get(url, (err, res) => {
+-     if (err) return callback(err);
+-     callback(null, res.body);
+-   });
+- }
++ async function fetchData(url) {
++   const res = await http.get(url);
++   return res.body;
++ }
+Apply this change? (Y/n/e=edit manually) > y
+✅ Success: Edited src/utils.js
 ```
 
-### Run tests
+### 3. Run tests
 
-```text
-> Run the test suite and tell me what fails
+```
+🧑 > Run the test suite and tell me what fails
+
+🔧 run_command(npm test)
+✅ [run_command] Auto-approved (Safe read-only): npm test
+🚀 [run_command] npm test
+...
+(live output streams here)
+...
+
+🤖 2 tests failed:
+- `utils.test.js:14` — expected 5, got 4
+- `auth.test.js:22` — TypeError: cannot read property 'id' of undefined
+
+Want me to fix them?
 ```
 
-Safe read-only commands can run immediately. Mutating or unknown commands ask first.
+### 4. Switch models mid-session
 
-### Use a specialized agent
+```
+🧑 > /model gpt-4o-mini
+✅ Switched to openai:gpt-4o-mini (session only — edit agent.config.json to persist)
 
-```bash
-myagent --agent analyzer "audit src/"
-myagent --agent refactorer "split src/App.jsx into smaller modules"
+🧑 > Explain the difference between useMemo and useCallback
 ```
 
-Inside a session:
+### 5. Export your session
 
-```text
-> /agent list
-> /agent run analyzer audit src/core
+```
+🧑 > /save my-debugging-session.md
+✅ Transcript saved: /path/to/my-debugging-session.md
+   23 messages, 14.2 KB
 ```
 
-## Useful Commands
+## Exiting
 
-| Command | Purpose |
-|---|---|
-| `/help` | Show commands |
-| `/new` | Start fresh |
-| `/index <folder>` | Build semantic index |
-| `/model [id]` | Show or switch model |
-| `/provider [name]` | Show or switch provider |
-| `/save [file]` | Export transcript |
-| `/session save <name>` | Save session |
-| `/resume <name>` | Resume session |
-| `/undo [N]` | Restore recent backups |
-| `/cost report` | Show usage cost |
-| `/mcp` | Connect/list MCP servers |
+Type `exit`, `quit`, or press `Ctrl+C`. The agent will gracefully close any MCP connections before shutdown.
 
 ## Next Steps
 
-- Configure providers in [configuration.md](./configuration.md).
-- Learn all commands in [commands.md](./commands.md).
-- Review tool behavior in [tools.md](./tools.md).
-- See the architecture in [architecture.md](./architecture.md).
+- [**Configure**](./configuration.md) model, planner, MCP servers
+- [**Learn all slash commands**](./commands.md)
+- [**Set up OpenAI or Anthropic**](./providers.md)
+- [**Connect MCP servers**](./mcp.md) for external tools

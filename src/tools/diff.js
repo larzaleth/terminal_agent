@@ -1,7 +1,61 @@
 import { diffLines } from "diff";
+import chalk from "chalk";
 
 /**
- * Summary stats for a text change.
+ * Render a colored unified-style diff between two texts.
+ * Green = added, Red = removed, Dim = unchanged context (truncated).
+ *
+ * @param {string} oldText
+ * @param {string} newText
+ * @param {string} filePath
+ * @param {{ contextLines?: number }} [opts]
+ */
+export function renderDiff(oldText, newText, filePath = "", opts = {}) {
+  const { contextLines = 3 } = opts;
+  const parts = diffLines(oldText, newText);
+
+  let out = "";
+  const line = "─".repeat(Math.min(process.stdout.columns || 80, 80));
+  
+  out += chalk.cyan.bold(`\n${line}\n`);
+  out += chalk.cyan.bold(` 📝 DIFF: ${filePath}\n`);
+  out += chalk.cyan.bold(`${line}\n`);
+  // Standard unified-diff file markers so tools / tests can key on them.
+  if (filePath) {
+    out += chalk.red(`--- ${filePath}\n`);
+    out += chalk.green(`+++ ${filePath}\n`);
+  }
+
+  for (let p = 0; p < parts.length; p++) {
+    const part = parts[p];
+    const lines = part.value.split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+
+    if (part.added) {
+      for (const l of lines) out += chalk.green(`+ ${l}\n`);
+    } else if (part.removed) {
+      for (const l of lines) out += chalk.red(`- ${l}\n`);
+    } else {
+      if (lines.length <= contextLines * 2) {
+        for (const l of lines) out += chalk.dim(`  ${l}\n`);
+      } else {
+        const isFirst = p === 0;
+        const isLast = p === parts.length - 1;
+        const head = isFirst ? [] : lines.slice(0, contextLines);
+        const tail = isLast ? [] : lines.slice(-contextLines);
+        for (const l of head) out += chalk.dim(`  ${l}\n`);
+        out += chalk.dim.italic(`  ... (${lines.length - head.length - tail.length} lines)\n`);
+        for (const l of tail) out += chalk.dim(`  ${l}\n`);
+      }
+    }
+  }
+
+  out += chalk.cyan.bold(`${line}\n`);
+  return out;
+}
+
+/**
+ * Summary stats for a diff — useful for logging.
  */
 export function diffStats(oldText, newText) {
   const parts = diffLines(oldText, newText);
