@@ -38,7 +38,6 @@ export default async function ({ path: filePath, target, replacement }) {
     const autoApprove =
       cfg.autoApprove ||
       process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
-      process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
       !process.stdin.isTTY ||
       (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)
     if (!autoApprove) {
