@@ -24,7 +24,7 @@ import { writeFileAtomic } from "../utils/utils.js";
 import { buildBm25Index, scoreBm25, tokenize } from "./bm25.js";
 
 const DEFAULT_EMBEDDING_MODELS = {
-  gemini: "text-embedding-004",
+  gemini: "gemini-embedding-2",
   openai: "text-embedding-3-small",
 };
 

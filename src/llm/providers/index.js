@@ -70,7 +70,7 @@ export function inferProvider(modelId) {
   if (!modelId) return null;
   const m = modelId.toLowerCase();
   if (m.includes(":")) return m.split(":")[0]; // explicit "openai:gpt-4o"
-  if (m.startsWith("gemini") || m.startsWith("text-embedding-004")) return "gemini";
+  if (m.startsWith("gemini") || m.startsWith("gemini-embedding")) return "gemini";
   if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("text-embedding-3")) return "openai";
   if (m.startsWith("claude")) return "anthropic";
   return null;

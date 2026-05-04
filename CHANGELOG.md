@@ -13,6 +13,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - **PowerShell Compatibility Tips**: Added explicit instructions for PowerShell `mkdir`, `grep` (Select-String), and `list_dir` to prevent common Windows pitfalls.
 
 ### Fixed
+- **Embedding Model Deprecation**: Fixed `404 NOT_FOUND` error during `embedBatch` by migrating from the obsolete `text-embedding-004` model to Google's newest `gemini-embedding-2` model, which is compatible with the `@google/genai` v1beta API.
 - **YOLO Mode (autoApprove)**: Fixed `run_command` and `delete_file` handlers not correctly bypassing confirmation prompts when YOLO mode is active.
 - **Robust Config Loading**: `loadConfig` now searches upwards for `agent.config.json`, preventing issues when the agent runs in a subdirectory.
 - **Command Classification**: Added `mkdir` and `New-Item` to `AUTO_ALLOWED` list for smoother directory creation.

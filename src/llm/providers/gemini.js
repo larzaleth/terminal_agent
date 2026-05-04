@@ -114,7 +114,7 @@ export class GeminiProvider {
     return resp?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   }
 
-  async embed(text, model = "text-embedding-004") {
+  async embed(text, model = "gemini-embedding-2") {
     const res = await this.client.models.embedContent({ model, contents: text });
     // SDK 1.51+ returns { embeddings: [{values}] }; older returns { embedding: { values } }
     const vec = res.embeddings?.[0]?.values || res.embedding?.values;
@@ -128,7 +128,7 @@ export class GeminiProvider {
    * @param {string} model
    * @returns {Promise<number[][]>} Array of vectors in the same order as inputs.
    */
-  async embedBatch(texts, model = "text-embedding-004") {
+  async embedBatch(texts, model = "gemini-embedding-2") {
     if (!Array.isArray(texts) || texts.length === 0) return [];
     const res = await this.client.models.embedContent({ model, contents: texts });
     const list = res.embeddings;

@@ -22,7 +22,7 @@ const PRICING = {
   "gemini-2.0-flash": { input: 0.00001, output: 0.00004 },
   "gemini-1.5-flash": { input: 0.0000075, output: 0.00003 },
   "gemini-1.5-pro": { input: 0.00125, output: 0.005 },
-  "text-embedding-004": { input: 0.00001 },
+  "gemini-embedding-2": { input: 0.00001 },
 
   // OpenAI
   "gpt-4o": { input: 0.0025, output: 0.01 },
@@ -107,7 +107,7 @@ export class CostTracker {
     return { inputTokens, outputTokens };
   }
 
-  trackEmbedding(text, fromCache = false, model = "text-embedding-004") {
+  trackEmbedding(text, fromCache = false, model = "gemini-embedding-2") {
     if (fromCache) {
       this.usage.cacheHits += 1;
       return 0;
