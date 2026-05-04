@@ -20,6 +20,7 @@ export default async function ({ path: filePath, target, replacement }) {
     }
 
     const content = await fs.readFile(filePath, "utf-8");
+
     // P0: Check for multiple occurrences
     const occurrences = content.split(target).length - 1;
     if (occurrences === 0) {
@@ -36,6 +37,7 @@ export default async function ({ path: filePath, target, replacement }) {
     // Show the diff preview (unless auto-approved via env var, non-TTY, or very small change).
     const autoApprove =
       cfg.autoApprove ||
+      process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
       process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
       !process.stdin.isTTY ||
       (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)
