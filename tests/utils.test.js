@@ -39,6 +39,24 @@ test("isSafePath: rejects non-strings and empty", () => {
   assert.equal(isSafePath(123), false);
 });
 
+test("isSafePath: blocks symlink escapes through existing parent directories", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "myagent-safe-root-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "myagent-safe-outside-"));
+  const link = path.join(root, "linked-out");
+
+  try {
+    try {
+      fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+    assert.equal(isSafePath(path.join("linked-out", "new-file.txt"), root), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("wordCount: handles whitespace variations", () => {
   assert.equal(wordCount("hello world"), 2);
   assert.equal(wordCount("  multiple   spaces   here  "), 3);

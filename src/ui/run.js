@@ -8,7 +8,7 @@ import { globalTracker } from "../llm/cost-tracker.js";
 import { shutdownMcp } from "../mcp/client.js";
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
-import { renderDiff, diffStats } from "../tools/diff.js";
+import { renderDiff } from "../tools/diff.js";
 
 // ─── Pure CLI — zero blinking, zero lag ───────────────────────────────
 

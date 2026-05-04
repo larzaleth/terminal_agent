@@ -185,7 +185,7 @@ export class CostTracker {
   }
 
   saveTurn(model, turnEntry, filename = COST_REPORT_FILE) {
-    const usdToIdr = 16000;
+    const usdToIdr = getUsdToIdrRate();
     const requestCostIdr = Math.ceil(turnEntry.cost * usdToIdr);
 
     const entry = {
@@ -244,6 +244,11 @@ export class CostTracker {
 }
 
 export const globalTracker = new CostTracker();
+
+function getUsdToIdrRate() {
+  const configured = Number.parseFloat(process.env.MYAGENT_USD_TO_IDR || "");
+  return Number.isFinite(configured) && configured > 0 ? configured : 16000;
+}
 
 // ===========================
 // 🔹 HELPER: VIEW HISTORY

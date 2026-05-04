@@ -3,7 +3,6 @@ import fsSync from "fs";
 import path from "path";
 import chalk from "chalk";
 import { MEMORY_FILE } from "../../config/constants.js";
-import { loadMemory } from "../../core/memory.js";
 
 const SESSION_DIR = ".agent_sessions";
 

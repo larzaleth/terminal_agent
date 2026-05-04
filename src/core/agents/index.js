@@ -9,9 +9,11 @@
 import { registerAgent, hasAgent } from "./registry.js";
 import { defaultAgent } from "./definitions/default.js";
 import { analyzerAgent } from "./definitions/analyzer.js";
+import { refactorerAgent } from "./definitions/refactorer.js";
 
 // Idempotent — safe to import from multiple entry points (CLI, slash, tests).
 if (!hasAgent(defaultAgent.name)) registerAgent(defaultAgent);
 if (!hasAgent(analyzerAgent.name)) registerAgent(analyzerAgent);
+if (!hasAgent(refactorerAgent.name)) registerAgent(refactorerAgent);
 
 export * from "./registry.js";

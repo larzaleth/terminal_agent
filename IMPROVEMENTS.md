@@ -33,11 +33,13 @@
 ### 2. User Experience (Priority Medium)
 - [x] **Session Persistence**: Save and resume conversations across terminal restarts using `/session` and `/resume`.
 - [x] **Undo/Rollback Command**: A `/undo` slash command to restore the last backup created by the agent.
-- [ ] **Search Improvement**: Upgrade RAG with Hybrid Search (BM25 + Vector) for better retrieval of exact symbols.
+- [x] **Search Improvement**: Upgrade RAG with Hybrid Search (BM25 + Vector) for better retrieval of exact symbols.
+- [x] **`.gitignore`-aware Indexing**: RAG file walking now skips root `.gitignore` patterns in addition to built-in ignored directories.
 
 ### 3. Advanced Agentic Power (Priority Low)
 - [ ] **Sub-Agent Delegation**: Ability for the main agent to spawn a child agent for specialized sub-tasks.
-- [ ] **Watch Mode**: Auto-reindex files as they change on disk.
+- [x] **Watch Mode**: Auto-reindex files as they change on disk.
+- [x] **Non-blocking Index Refresh**: File write/edit/delete tools schedule debounced index updates instead of blocking tool completion on embeddings.
 - [ ] **Tool Use Learning**: Track which tools succeed most often and adjust instructions dynamically.
 
 ---

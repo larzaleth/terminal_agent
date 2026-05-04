@@ -99,8 +99,9 @@ Built-in agents:
 
 | Agent | Tools | Description |
 |---|---|---|
-| `default` | All 10 + MCP | Full-capability coding agent |
+| `default` | All built-ins + MCP | Full-capability coding agent |
 | `analyzer` | Read-only (4) | Code auditor — maps features, finds bugs & security issues |
+| `refactorer` | Local refactor tools | Focused extraction, restructuring, and modularization agent |
 
 ```bash
 # One-shot from CLI
@@ -108,6 +109,7 @@ myagent --agent analyzer "audit the security of src/"
 
 # From inside a session
 /agent run analyzer find all TODO comments and dead code
+/agent run refactorer extract components from src/App.jsx
 /agent info analyzer
 /agent list
 ```

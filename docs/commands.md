@@ -292,6 +292,7 @@ List, inspect, or invoke a specialized agent. Agents are **scoped sub-configurat
 
   default      (tools: all)  Full-capability coding agent — all built-in tools + MCP.
   analyzer     (tools: 4)    Read-only code auditor.
+  refactorer   (tools: 11)   Focused refactoring agent.
 
 🧑 > /agent run analyzer audit src/core and list P0 issues
 
@@ -306,6 +307,7 @@ List, inspect, or invoke a specialized agent. Agents are **scoped sub-configurat
 
 - **`default`** — classic full-capability coding agent (all tools, senior prompt).
 - **`analyzer`** — read-only auditor. Cannot write, edit, delete, or run anything.
+- **`refactorer`** — local write-capable refactoring agent for extraction, modularization, and restructuring.
 
 ### Creating your own
 
@@ -317,6 +319,7 @@ Skip the interactive session entirely:
 
 ```bash
 myagent --agent analyzer "audit src/core"
+myagent --agent refactorer "split src/App.jsx into components"
 myagent --agent analyzer . > audit.md
 ```
 

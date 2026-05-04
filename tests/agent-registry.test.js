@@ -62,6 +62,7 @@ test("built-in agents load via index.js barrel", async () => {
   await import("../src/core/agents/index.js");
   assert.ok(hasAgent("default"));
   assert.ok(hasAgent("analyzer"));
+  assert.ok(hasAgent("refactorer"));
 
   const analyzer = getAgent("analyzer");
   assert.ok(Array.isArray(analyzer.allowedTools));
@@ -71,4 +72,12 @@ test("built-in agents load via index.js barrel", async () => {
   assert.equal(analyzer.disableMcp, true);
   assert.ok(typeof analyzer.systemPromptOverride === "string");
   assert.ok(analyzer.systemPromptOverride.includes("read-only"));
+
+  const refactorer = getAgent("refactorer");
+  assert.ok(Array.isArray(refactorer.allowedTools));
+  assert.ok(refactorer.allowedTools.includes("write_file"));
+  assert.ok(refactorer.allowedTools.includes("replace_lines"));
+  assert.ok(refactorer.allowedTools.includes("run_command"));
+  assert.equal(refactorer.disableMcp, true);
+  assert.ok(refactorer.systemPromptOverride.includes("Critical Extraction Rule"));
 });

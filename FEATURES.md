@@ -114,6 +114,7 @@
 | **Agent registry** | In-memory `Map<name, AgentDefinition>` with duplicate rejection and `Object.freeze()` |
 | **Built-in: `default`** | Full-capability coding agent — all tools + MCP |
 | **Built-in: `analyzer`** | Read-only code auditor — `read_file`, `list_dir`, `grep_search`, `get_file_info` only |
+| **Built-in: `refactorer`** | Local write-capable refactoring agent for extraction, modularization, and restructuring |
 | **One-shot CLI mode** | `myagent --agent analyzer "audit src/"` — runs agent and exits |
 | **Inline invocation** | `/agent run analyzer audit the codebase` — runs agent within an active session |
 | **Custom agents** | Drop a definition in `src/core/agents/definitions/`, register, and it's ready |

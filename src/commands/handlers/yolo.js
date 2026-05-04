@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import path from "path";
 import chalk from "chalk";
 import { loadConfig, findConfigPath } from "../../config/config.js";
 

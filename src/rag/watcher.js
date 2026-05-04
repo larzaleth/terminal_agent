@@ -1,7 +1,7 @@
 import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
-import { updateIndex } from "./semantic.js";
+import { scheduleIndexUpdate } from "./semantic.js";
 import {
   IGNORE_DIRS,
   CODE_EXTS,
@@ -51,7 +51,7 @@ export function startWatcher(rootPath = process.cwd()) {
     }
     
     try {
-      await updateIndex(filePath);
+      scheduleIndexUpdate(filePath);
     } catch (err) {
       if (process.env.MYAGENT_DEBUG === "1") {
         console.error(chalk.red(`❌ Failed to update index for ${filePath}: ${err.message}`));

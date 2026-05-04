@@ -3,7 +3,7 @@ import { runWithSpawn } from "../shell-runner.js";
 import { loadConfig } from "../../config/config.js";
 import { confirmExecution } from "./base.js";
 
-export default async function ({ cmd }) {
+export default async function ({ cmd }, { signal } = {}) {
   if (!cmd || cmd.trim() === "") return "❌ Error: Command cannot be empty.";
 
   const { verdict, reason } = classifyCommand(cmd);
@@ -22,5 +22,5 @@ export default async function ({ cmd }) {
     }
   }
 
-  return runWithSpawn(cmd);
+  return runWithSpawn(cmd, { signal });
 }

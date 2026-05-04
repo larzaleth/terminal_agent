@@ -3,8 +3,6 @@ import { useState, useReducer, useEffect, useCallback, useMemo, useRef } from "r
 import { Box, useApp, useInput, Static, Text } from "ink";
 import { h } from "./h.js";
 
-import { Header } from "./components/Header.js";
-import { MessageList } from "./components/MessageList.js";
 import { MessageItem } from "./components/MessageItem.js";
 import { InputBox } from "./components/InputBox.js";
 import { DiffPrompt } from "./components/DiffPrompt.js";
@@ -15,12 +13,7 @@ import { log } from "../utils/logger.js";
 
 import { setPrompter, resetPrompter } from "./prompter.js";
 import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js";
-import { setMouseCallback, clearMouseCallback } from "./mouse.js";
-import { findToolAt, extractTextInRange } from "./clickRegistry.js";
-import {
-  MAX_ITERATIONS_DEFAULT,
-  DIFF_AUTO_APPROVE_ENV,
-} from "../config/constants.js";
+import { MAX_ITERATIONS_DEFAULT } from "../config/constants.js";
 import {
   writeClipboard,
   extractLastAssistant,
@@ -33,14 +26,13 @@ import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
 import { loadConfig } from "../config/config.js";
 import { globalTracker } from "../llm/cost-tracker.js";
-import { listMcpStatus, shutdownMcp } from "../mcp/client.js";
+import { shutdownMcp } from "../mcp/client.js";
 
 // ─── Main App ────────────────────────────────────────────────────────
 export function App() {
   const { exit } = useApp();
   const [state, dispatch] = useReducer(reducer, initialState);
   const [config, setConfig] = useState(() => loadConfig());
-  const [mcpServers, setMcpServers] = useState([]);
   const [abortController, setAbortController] = useState(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const { rows, columns } = useTerminalSize();
@@ -67,10 +59,6 @@ export function App() {
       flushTextBuffer();
     }, 150);
   }, [flushTextBuffer]);
-
-  // Truncate logic removed to allow full flow.
-  const chromeRows = state.prompt ? (state.prompt.kind === "edit" ? 15 : 8) : 5;
-  const chatMaxRows = Math.max(5, rows - chromeRows);
 
   // ── Prompter registration ──────────────────────────────────────────
   useEffect(() => {
@@ -293,7 +281,6 @@ export function App() {
             dispatch({ type: "add_system", text: `Unknown command: ${text}` });
           }
           setConfig(loadConfig());
-          setMcpServers(listMcpStatus());
         } catch (err) {
           dispatch({ type: "add_system", text: `Error: ${err.message}` });
         } finally {

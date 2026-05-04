@@ -82,12 +82,38 @@ export function resolveTerminationPlan(pid, platform = os.platform()) {
 // Resolves `filePath` against the current working directory and ensures
 // the resolved location stays inside the CWD tree. Rejects absolute paths
 // that escape (e.g. /etc/passwd, C:\Windows\...) and traversal via `..`.
+// For existing paths (or existing parent directories for new files), realpath
+// is used so symlinks cannot smuggle writes outside the workspace.
 export function isSafePath(filePath, root = process.cwd()) {
   if (typeof filePath !== "string" || filePath.trim() === "") return false;
   const normalizedRoot = path.resolve(root);
   const resolved = path.resolve(normalizedRoot, filePath);
-  if (resolved === normalizedRoot) return true;
-  return resolved.startsWith(normalizedRoot + path.sep);
+  if (!isPathInside(resolved, normalizedRoot)) return false;
+
+  try {
+    const realRoot = fs.realpathSync.native(normalizedRoot);
+    const existing = nearestExistingPath(resolved);
+    if (!existing) return false;
+    const realExisting = fs.realpathSync.native(existing);
+    return isPathInside(realExisting, realRoot);
+  } catch {
+    return false;
+  }
+}
+
+function isPathInside(candidate, root) {
+  const rel = path.relative(root, candidate);
+  return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function nearestExistingPath(targetPath) {
+  let current = path.resolve(targetPath);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  return current;
 }
 
 // ===========================

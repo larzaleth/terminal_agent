@@ -1,8 +1,7 @@
 import fs from "fs/promises";
 import { isSafePath } from "../../utils/utils.js";
-import { updateIndex } from "../../rag/semantic.js";
+import { scheduleIndexUpdate } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
-import { loadConfig } from "../../config/config.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 /**
@@ -18,7 +17,6 @@ import { exists, UNSAFE_PATH_MSG } from "./base.js";
  */
 export default async function ({ path: filePath, startLine, endLine, content }) {
   try {
-    const cfg = loadConfig();
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) {
       return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files.`;
@@ -55,7 +53,7 @@ export default async function ({ path: filePath, startLine, endLine, content }) 
     const newContent = newLines.join("\n");
 
     await fs.writeFile(filePath, newContent);
-    await updateIndex(filePath);
+    scheduleIndexUpdate(filePath);
 
     const removedCount = effectiveEnd - startLine + 1;
     const addedCount = replacementLines.length;

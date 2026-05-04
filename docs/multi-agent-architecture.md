@@ -40,7 +40,7 @@ Every agent is just a plain object (see `src/core/agents/types.js`):
 ## 3. Built-in agents
 
 ### `default`
-Classic full-capability coding agent — all 10 built-in tools + MCP, default senior prompt. This is what runs when you type a request in the main REPL without `/agent`.
+Classic full-capability coding agent — all built-in tools + MCP, default senior prompt. This is what runs when you type a request in the main REPL without `/agent`.
 
 ```js
 // src/core/agents/definitions/default.js
@@ -64,6 +64,22 @@ export const analyzerAgent = {
   skipRag: true,       // analyzer does its own exploration
   maxIterations: 50,
   systemPromptOverride: `You are a senior code auditor operating strictly in read-only mode. ...`,
+};
+```
+
+### `refactorer`
+Local write-capable refactoring agent. MCP is disabled so extraction and restructuring stay inside the repository. Use it for large mechanical refactors that would otherwise bloat the default prompt.
+
+```js
+// src/core/agents/definitions/refactorer.js
+export const refactorerAgent = {
+  name: "refactorer",
+  description: "Focused refactoring agent.",
+  allowedTools: ["read_file", "grep_search", "write_file", "replace_lines", "batch_edit", "run_command"],
+  disableMcp: true,
+  skipRag: true,
+  maxIterations: 250,
+  systemPromptOverride: `You are a senior refactoring agent. ...`,
 };
 ```
 
@@ -173,8 +189,8 @@ test("reviewer agent never has write tools", () => {
 |---|---|---|
 | `default` ✅ | all | classic full-capability agent |
 | `analyzer` ✅ | read-only | audit codebase, emit prioritized task list |
+| `refactorer` ✅ | local read/write + validation shell | mechanical refactors with diff preview |
 | `reviewer` | read + git-only shell | PR / last-commit reviewer |
-| `refactorer` | read + edit + batch_edit | mechanical refactors with diff preview |
 | `test-writer` | read + write (tests/*) + npm test | auto-generate tests |
 | `docs-generator` | read + write (docs/*) | auto-docs from JSDoc |
 | `security-scanner` | read-only | secrets / injection / vuln pattern detection |

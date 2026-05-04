@@ -28,6 +28,9 @@ const DEFAULT_EMBEDDING_MODELS = {
   openai: "text-embedding-3-small",
 };
 
+const pendingIndexUpdates = new Map();
+const INDEX_UPDATE_DEBOUNCE_MS = 300;
+
 export function resolveEmbeddingSpec(config = loadConfig(), env = process.env) {
   const explicitProvider = config.embeddingProvider
     ? normalizeProviderName(config.embeddingProvider)
@@ -254,7 +257,7 @@ function detectType(file) {
 }
 
 // Async recursive walker — non-blocking for large repos.
-async function getAllFiles(dir, exts = CODE_EXTS) {
+async function getAllFiles(dir, exts = CODE_EXTS, ignoreMatcher = createGitignoreMatcher(dir)) {
   const results = [];
   let entries;
   try {
@@ -265,9 +268,10 @@ async function getAllFiles(dir, exts = CODE_EXTS) {
 
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
+    if (ignoreMatcher(full)) continue;
     if (entry.isDirectory()) {
       if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
-        const sub = await getAllFiles(full, exts);
+        const sub = await getAllFiles(full, exts, ignoreMatcher);
         results.push(...sub);
       }
     } else if (exts.includes(path.extname(entry.name))) {
@@ -275,6 +279,91 @@ async function getAllFiles(dir, exts = CODE_EXTS) {
     }
   }
   return results;
+}
+
+function createGitignoreMatcher(rootDir) {
+  const root = path.resolve(rootDir);
+  const patterns = loadGitignorePatterns(root);
+  if (patterns.length === 0) return () => false;
+
+  return (filePath) => {
+    const rel = toPosixPath(path.relative(root, path.resolve(filePath)));
+    if (!rel || rel.startsWith("..")) return false;
+    const base = path.posix.basename(rel);
+
+    let ignored = false;
+    for (const pattern of patterns) {
+      if (matchesGitignorePattern(rel, base, pattern)) {
+        ignored = !pattern.negated;
+      }
+    }
+    return ignored;
+  };
+}
+
+function loadGitignorePatterns(root) {
+  const gitignorePath = path.join(root, ".gitignore");
+  if (!fsSync.existsSync(gitignorePath)) return [];
+
+  try {
+    return fsSync.readFileSync(gitignorePath, "utf-8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line) => {
+        const negated = line.startsWith("!");
+        let value = negated ? line.slice(1) : line;
+        value = toPosixPath(value).replace(/^\/+/, "");
+        const directoryOnly = value.endsWith("/");
+        value = value.replace(/\/+$/, "");
+        return { value, negated, directoryOnly };
+      })
+      .filter((pattern) => pattern.value);
+  } catch (err) {
+    log.warn(`failed to read .gitignore: ${err.message}`);
+    return [];
+  }
+}
+
+function matchesGitignorePattern(rel, base, pattern) {
+  const value = pattern.value;
+  if (!value.includes("/")) {
+    if (value.includes("*") || value.includes("?")) {
+      return globToRegExp(value).test(base);
+    }
+    const matchesName = base === value || rel.startsWith(`${value}/`) || rel.includes(`/${value}/`);
+    return pattern.directoryOnly ? matchesName && rel.includes("/") : matchesName;
+  }
+  const regex = globToRegExp(value.includes("/") ? value : `**/${value}`);
+  return regex.test(rel);
+}
+
+function globToRegExp(glob) {
+  let source = "^";
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    if (ch === "*") {
+      if (glob[i + 1] === "*") {
+        source += ".*";
+        i++;
+      } else {
+        source += "[^/]*";
+      }
+    } else if (ch === "?") {
+      source += "[^/]";
+    } else {
+      source += escapeRegExp(ch);
+    }
+  }
+  return new RegExp(source + "$");
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toPosixPath(filePath) {
+  return filePath.split(path.sep).join("/");
 }
 
 // ===========================
@@ -385,6 +474,24 @@ export async function updateIndex(filePath) {
     const stat = await fs.stat(INDEX_FILE);
     _indexCache = { mtime: stat.mtimeMs, data: index };
   }
+}
+
+export function scheduleIndexUpdate(filePath, { skipWhenEmpty = true } = {}) {
+  const normalizedPath = path.resolve(filePath);
+  if (skipWhenEmpty && loadIndex().length === 0) return false;
+
+  const existingTimer = pendingIndexUpdates.get(normalizedPath);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const timer = setTimeout(() => {
+    pendingIndexUpdates.delete(normalizedPath);
+    updateIndex(normalizedPath).catch((err) => {
+      log.warn(`scheduled updateIndex failed for ${normalizedPath}: ${err.message}`);
+    });
+  }, INDEX_UPDATE_DEBOUNCE_MS);
+
+  pendingIndexUpdates.set(normalizedPath, timer);
+  return true;
 }
 
 // ===========================

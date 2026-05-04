@@ -60,9 +60,9 @@ async function buildToolset(definition) {
   const includeMcp = definition?.disableMcp !== true;
   const allDecls = includeMcp ? [...decls, ...mcp.decls] : decls;
 
-  const dispatch = async (name, args) => {
-    if (handlers[name]) return handlers[name](args);
-    if (includeMcp && mcp.has(name)) return mcp.handler(name, args);
+  const dispatch = async (name, args, context = {}) => {
+    if (handlers[name]) return handlers[name](args, context);
+    if (includeMcp && mcp.has(name)) return mcp.handler(name, args, context);
     return `Error: Tool '${name}' is not available for this agent.`;
   };
 
@@ -364,7 +364,7 @@ export async function runAgent(userInput, callbacks = {}) {
         readCalls.map((tc) =>
           toolLimit(async () => {
             onToolCall(tc.name, tc.args);
-            const result = await toolset.dispatch(tc.name, tc.args);
+            const result = await toolset.dispatch(tc.name, tc.args, { signal });
             onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
             return { type: "tool_result", id: tc.id, name: tc.name, output: String(result) };
           })
@@ -376,7 +376,7 @@ export async function runAgent(userInput, callbacks = {}) {
     // Writes: sequential
     for (const tc of writeCalls) {
       onToolCall(tc.name, tc.args);
-      const result = await toolset.dispatch(tc.name, tc.args);
+      const result = await toolset.dispatch(tc.name, tc.args, { signal });
       onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
       resultBlocks.push({ type: "tool_result", id: tc.id, name: tc.name, output: String(result) });
     }

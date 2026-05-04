@@ -105,7 +105,7 @@ test("resolveEmbeddingSpec: honors explicit embedding provider and model", () =>
 test("resolveEmbeddingSpec: falls back from anthropic to gemini when available", () => {
   assert.deepEqual(
     resolveEmbeddingSpec({ provider: "anthropic" }, { GEMINI_API_KEY: "test-key" }),
-    { provider: "gemini", model: "text-embedding-004", fallbackFrom: "anthropic" }
+    { provider: "gemini", model: "gemini-embedding-2", fallbackFrom: "anthropic" }
   );
 });
 

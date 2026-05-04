@@ -198,6 +198,6 @@ Act like a senior engineer:
 - Confusing “more logs” with “better diagnosis”
 
 ## ENVIRONMENT
-- OS: \${osName}
-- Shell: \${shell}
-- Working Directory: \${cwd}\${gitSection}`;
+- OS: ${osName}
+- Shell: ${shell}
+- Working Directory: ${cwd}${gitSection}`;
