@@ -49,12 +49,13 @@ export const toolDeclarations = [
   {
     name: "write_file",
     description:
-      "Write full content to a file. Auto-creates parent dirs. Use for NEW files or COMPLETE rewrites. For small changes, prefer edit_file.",
+      "Write full content to a file. Auto-creates parent dirs. To OVERWRITE an existing file, you MUST set 'overwrite': true, otherwise it will fail. For small changes, prefer edit_file.",
     parameters: {
       type: "OBJECT",
       properties: {
         path: { type: "STRING", description: "File path to write" },
         content: { type: "STRING", description: "Complete file content" },
+        overwrite: { type: "BOOLEAN", description: "If true, overwrites an existing file. If false/omitted, fails if the file exists." },
       },
       required: ["path", "content"],
     },

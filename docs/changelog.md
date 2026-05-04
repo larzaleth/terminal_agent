@@ -19,7 +19,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - **Directory Pre-check Elimination**: Agent no longer wastes iterations checking if target directories exist before writing — `write_file` auto-creates parent dirs. System prompt explicitly forbids `list_dir` spam and manual mkdir instructions.
 - **False Failure Detection**: `grep_search` "no matches" result no longer triggers failure counter. Changed prefix from ❌ to ℹ️ since it's an informational result, not a tool error.
 - **Anti-Hallucination Rules**: Agent is now explicitly forbidden from inventing component names or searching for files it hasn't seen in `read_file` output.
-- **Tool Usage Clarification**: Added strict rules to prevent using `batch_edit` or `edit_file` for new files, ensuring `write_file` is used instead.
+- **Focus and Discipline**: Added strict "Anti-Rabbit Hole" rules to the FAST mode. Agent is explicitly instructed NOT to get distracted by minor bugs, styling issues, or out-of-sync imports while performing the core extraction task.
+- **Anti-Investigation Paralysis**: Agent is now limited to a maximum of 3 tool calls when hunting down a single missing import or comparing duplicate components, preventing it from wasting dozens of iterations on minor project cleanup.
+- **Tool Usage Clarification**: Added strict rules to prevent using `batch_edit` or `edit_file` for new files, ensuring `write_file` is used instead. Also strongly prefers `batch_edit` for mass import updates rather than editing files one by one.
+- **Overwrite Protection**: `write_file` now rejects overwriting existing files by default. Agent MUST pass `overwrite: true` explicitly, which forces it to acknowledge existing files and stops the infinite "re-extraction" loop during mega-file refactoring.
 
 ## [2.5.1] — 2026-05-04
 

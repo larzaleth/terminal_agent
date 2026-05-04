@@ -5,11 +5,16 @@ import { updateIndex } from "../../rag/semantic.js";
 import { backupFile } from "../../utils/backup.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
-export default async function ({ path: filePath, content }) {
+export default async function ({ path: filePath, content, overwrite = false }) {
   try {
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!content) {
       return "❌ Error: Content cannot be empty.\n💡 Tip: Provide the full content to write to the file.";
+    }
+
+    const fileExists = await exists(filePath);
+    if (fileExists && !overwrite) {
+      return `❌ Error: File '${filePath}' already exists.\n💡 Tip: If you meant to overwrite it, you MUST set the 'overwrite: true' parameter. If you are extracting components, SKIP this file and focus on DELETING the code from the source file.`;
     }
 
     const dir = path.dirname(filePath);
