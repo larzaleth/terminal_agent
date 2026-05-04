@@ -8,25 +8,80 @@ import { retry, isReadOnlyTool } from "../utils/utils.js";
 import { globalTracker } from "../llm/cost-tracker.js";
 import { getProvider } from "../llm/providers/index.js";
 import { toJsonSchemaTools } from "../llm/providers/base.js";
-import { TOOL_CONCURRENCY } from "../config/constants.js";
+import { TOOL_CONCURRENCY, MAX_ITERATIONS_DEFAULT } from "../config/constants.js";
 import { getMcpTools } from "../mcp/client.js";
+import { log } from "../utils/logger.js";
+
+const LOOP_WINDOW = 10;        // only look at the last N tool calls for dupe detection
+const LOOP_DUPE_LIMIT = 5;    // same signature ≥ this many times within window → stop
+
+/**
+ * @typedef {Object} AgentRunOptions
+ * @property {import("./agents/types.js").AgentDefinition} [definition]
+ *   Optional specialized-agent definition. When set, runAgent filters tools,
+ *   overrides the system prompt, and uses the definition's model/provider.
+ *   Leaving this blank runs the classic "default" agent with all tools.
+ */
+
+/**
+ * Build the runtime tool set for a given agent definition.
+ * Returns the filtered handlers map, JSON-schema tool list, and dispatcher.
+ */
+async function buildToolset(definition) {
+  const mcp = await getMcpTools();
+
+  let handlers = { ...builtinTools };
+  let decls = [...builtinDecls];
+
+  if (definition?.allowedTools && definition.allowedTools.length > 0) {
+    const allowed = new Set(definition.allowedTools);
+    handlers = Object.fromEntries(
+      Object.entries(handlers).filter(([name]) => allowed.has(name))
+    );
+    decls = decls.filter((d) => allowed.has(d.name));
+  }
+
+  // MCP tools are always available unless definition explicitly excludes them.
+  const includeMcp = definition?.disableMcp !== true;
+  const allDecls = includeMcp ? [...decls, ...mcp.decls] : decls;
+
+  const dispatch = async (name, args) => {
+    if (handlers[name]) return handlers[name](args);
+    if (includeMcp && mcp.has(name)) return mcp.handler(name, args);
+    return `Error: Tool '${name}' is not available for this agent.`;
+  };
+
+  return {
+    handlers,
+    decls: allDecls,
+    dispatch,
+    schemas: toJsonSchemaTools(allDecls),
+  };
+}
+
+/**
+ * Resolve effective runtime config for this agent run.
+ * Definition overrides > user config > built-in defaults.
+ */
+function resolveRuntime(definition) {
+  const cfg = loadConfig();
+  return {
+    provider: definition?.provider || cfg.provider || "gemini",
+    model: definition?.model || cfg.model,
+    maxIterations: definition?.maxIterations || cfg.maxIterations || MAX_ITERATIONS_DEFAULT,
+    systemInstruction: definition?.systemPromptOverride || getSystemPrompt(),
+  };
+}
 
 /**
  * Main agent loop — provider-agnostic, streaming, parallel tool execution,
- * retry logic, MCP tool merge.
- * 
- * @param {string} userInput - The user's input prompt.
- * @param {Object} [callbacks] - Optional event callbacks for the UI.
- * @param {Function} [callbacks.onPlan] - Called when a plan is generated: `(plan: Array<{step: string, action: string}>) => void`.
- * @param {Function} [callbacks.onThinking] - Called when the agent is "thinking" (waiting for LLM response).
- * @param {Function} [callbacks.onText] - Called with chunks of text as they stream from the LLM: `(text: string) => void`.
- * @param {Function} [callbacks.onToolCall] - Called when a tool is invoked: `(name: string, args: Object) => void`.
- * @param {Function} [callbacks.onToolResult] - Called when a tool finishes: `(name: string, summary: string) => void`.
- * @param {Function} [callbacks.onRetry] - Called when an API request fails and is retried.
- * @param {Function} [callbacks.onDone] - Called when the agent loop naturally finishes.
- * @param {Function} [callbacks.onError] - Called if a fatal error occurs in the loop: `(err: Error) => void`.
- * @param {AbortSignal} [callbacks.signal] - AbortSignal to cancel the agent loop early.
- * @returns {Promise<string>} The complete final response string from the agent.
+ * retry logic, MCP tool merge. Accepts an optional `definition` to run a
+ * specialized sub-agent (read-only analyzer, security-scanner, …) with a
+ * restricted toolset and custom system prompt.
+ *
+ * @param {string} userInput
+ * @param {Object & AgentRunOptions} [callbacks]
+ * @returns {Promise<string>} Final response text.
  */
 export async function runAgent(userInput, callbacks = {}) {
   const {
@@ -39,46 +94,42 @@ export async function runAgent(userInput, callbacks = {}) {
     onDone = () => {},
     onError = () => {},
     signal,
+    definition,
   } = callbacks;
 
-  const config = loadConfig();
-  const providerName = config.provider || "gemini";
-  const provider = getProvider(providerName);
-  const agentModel = config.model;
-  const systemInstruction = getSystemPrompt();
+  const runtime = resolveRuntime(definition);
+  const provider = getProvider(runtime.provider);
+  const toolset = await buildToolset(definition);
+  const toolLimit = pLimit(TOOL_CONCURRENCY);
 
-  // ─── Merge built-in tools with any connected MCP tools ──────────────
-  const mcpTools = await getMcpTools(); // { decls: [...], handler(name, args) }
-  const allDecls = [...builtinDecls, ...mcpTools.decls];
-  const toolSchemas = toJsonSchemaTools(allDecls);
-  const dispatchTool = async (name, args) => {
-    if (builtinTools[name]) return builtinTools[name](args);
-    if (mcpTools.has(name)) return mcpTools.handler(name, args);
-    return `Error: Unknown tool ${name}`;
-  };
-
-  // ─── STEP 1: Plan (auto-skipped for short requests) ─────────────────
+  // ─── STEP 1: Plan (auto-skipped for short requests or agents that opt out) ─
   const memory = loadMemory();
   onThinking();
-  let plan;
-  try {
-    plan = await createPlan(userInput);
-    onPlan(plan);
-  } catch {
-    plan = [{ step: "Process request", action: "respond" }];
-    onPlan(plan);
-  }
 
-  // ─── STEP 2: RAG context ────────────────────────────────────────────
-  let context = "";
-  try {
-    const index = loadIndex();
-    if (index.length > 0) {
-      const results = await search(userInput, index, { topK: 3, threshold: 0.7 });
-      context = buildContext(results);
+  let plan;
+  if (definition?.skipPlanner) {
+    plan = [{ step: "Process request", action: "respond" }];
+  } else {
+    try {
+      plan = await createPlan(userInput, memory);
+    } catch {
+      plan = [{ step: "Process request", action: "respond" }];
     }
-  } catch {
-    /* RAG optional */
+  }
+  onPlan(plan);
+
+  // ─── STEP 2: RAG context (skippable for read-only auditors) ───────────────
+  let context = "";
+  if (!definition?.skipRag) {
+    try {
+      const index = loadIndex();
+      if (index.length > 0) {
+        const results = await search(userInput, index, { topK: 3, threshold: 0.7 });
+        context = buildContext(results);
+      }
+    } catch {
+      /* RAG is optional */
+    }
   }
 
   const userMessage = context
@@ -87,19 +138,14 @@ export async function runAgent(userInput, callbacks = {}) {
 
   memory.push({ role: "user", blocks: [{ type: "text", text: userMessage }] });
 
-  // ─── STEP 3: Agent loop ─────────────────────────────────────────────
+  // ─── STEP 3: Agent loop ───────────────────────────────────────────────────
   let isDone = false;
   let finalResponse = "";
   let iterations = 0;
-  const maxIterations = config.maxIterations || 50;
-  const toolLimit = pLimit(TOOL_CONCURRENCY);
-
-  // Loop detection: track tool call signatures to catch repetitive behavior
-  const seenToolCalls = new Map(); // signature → count
-  let consecutiveDupes = 0;
+  const recentSignatures = [];     // sliding window of recent tool call signatures
   let consecutiveFailures = 0;
 
-  while (!isDone && iterations < maxIterations) {
+  while (!isDone && iterations < runtime.maxIterations) {
     if (signal?.aborted) {
       onText("\n⚠️ Cancelled by user.\n");
       break;
@@ -116,10 +162,10 @@ export async function runAgent(userInput, callbacks = {}) {
       const stream = await retry(
         () =>
           provider.stream({
-            model: agentModel,
-            systemInstruction,
+            model: runtime.model,
+            systemInstruction: runtime.systemInstruction,
             messages: memory,
-            tools: toolSchemas,
+            tools: toolset.schemas,
           }),
         { onRetry }
       );
@@ -129,8 +175,6 @@ export async function runAgent(userInput, callbacks = {}) {
           streamedText += evt.text;
           onText(evt.text);
         } else if (evt.type === "thought") {
-          // Accumulate thoughts for memory but don't print them by default
-          if (!thisTurnThoughts) thisTurnThoughts = "";
           thisTurnThoughts += evt.text;
         } else if (evt.type === "tool_call") {
           toolCalls.push(evt);
@@ -145,12 +189,12 @@ export async function runAgent(userInput, callbacks = {}) {
 
     // Track tokens — use API-reported counts when available.
     if (usage) {
-      globalTracker.trackGeneration(agentModel, {
+      globalTracker.trackGeneration(runtime.model, {
         promptTokenCount: usage.inputTokens,
         candidatesTokenCount: usage.outputTokens,
       });
     } else {
-      globalTracker.trackGeneration(agentModel, "", streamedText);
+      globalTracker.trackGeneration(runtime.model, "", streamedText);
     }
 
     // Build assistant message from this turn's output.
@@ -158,12 +202,12 @@ export async function runAgent(userInput, callbacks = {}) {
     if (thisTurnThoughts) blocks.push({ type: "thought", text: thisTurnThoughts });
     if (streamedText) blocks.push({ type: "text", text: streamedText });
     for (const tc of toolCalls) {
-      blocks.push({ 
-        type: "tool_call", 
-        id: tc.id, 
-        name: tc.name, 
+      blocks.push({
+        type: "tool_call",
+        id: tc.id,
+        name: tc.name,
         args: tc.args,
-        ...(tc.thoughtSignature && { thoughtSignature: tc.thoughtSignature })
+        ...(tc.thoughtSignature && { thoughtSignature: tc.thoughtSignature }),
       });
     }
     if (blocks.length === 0) break;
@@ -176,48 +220,45 @@ export async function runAgent(userInput, callbacks = {}) {
       continue;
     }
 
-    // ─── LOOP DETECTION ───────────────────────────────────────────────
-    // Check if these exact tool calls were already made this turn
-    let allDupes = true;
+    // ─── LOOP DETECTION (sliding window, self-resetting) ─────────────────
+    // Add current tool call signatures to the window, then check if any
+    // single signature has appeared LOOP_DUPE_LIMIT+ times in the window.
     for (const tc of toolCalls) {
-      const sig = tc.name + ":" + JSON.stringify(tc.args);
-      const count = (seenToolCalls.get(sig) || 0) + 1;
-      seenToolCalls.set(sig, count);
-      if (count <= 1) allDupes = false;
+      recentSignatures.push(tc.name + ":" + JSON.stringify(tc.args));
     }
-    if (allDupes) {
-      consecutiveDupes++;
-    } else {
-      consecutiveDupes = 0;
-    }
+    while (recentSignatures.length > LOOP_WINDOW) recentSignatures.shift();
+
+    const counts = new Map();
+    for (const sig of recentSignatures) counts.set(sig, (counts.get(sig) || 0) + 1);
+    const mostRepeated = Math.max(0, ...counts.values());
 
     let wasForcedToStop = false;
-    if (consecutiveDupes >= 2 || consecutiveFailures >= 3) {
-      const reason = consecutiveDupes >= 2 ? "Loop detected" : "Persistent failures detected";
+    if (mostRepeated >= LOOP_DUPE_LIMIT || consecutiveFailures >= 3) {
+      const reason = mostRepeated >= LOOP_DUPE_LIMIT ? "Loop detected" : "Persistent failures detected";
       const msg = `\n⚠️ ${reason} — stopping to provide a conclusion.\n`;
       onText(msg);
       finalResponse += msg;
-      
-      memory.push({ role: "tool", blocks: [{ 
-        type: "tool_result", 
-        id: "loop_break", 
-        name: "system", 
-        output: `CRITICAL: ${reason.toUpperCase()}. STOP all actions now. Provide your final [RESULT] summary explaining why you stopped (e.g. why the command failed) and what the user needs to do.` 
-      }]});
-      
+
+      memory.push({
+        role: "tool",
+        blocks: [{
+          type: "tool_result",
+          id: "loop_break",
+          name: "system",
+          output: `CRITICAL: ${reason.toUpperCase()}. STOP all actions now. Provide your final [RESULT] summary explaining why you stopped and what the user needs to do next.`,
+        }],
+      });
+
       toolCalls.length = 0;
       wasForcedToStop = true;
     }
 
-    // ─── EXECUTE TOOL CALLS ─────────────────────────────────────────
+    // ─── EXECUTE TOOL CALLS ──────────────────────────────────────────────
     if (toolCalls.length === 0) {
-      // If we just forced a stop, we allow ONE MORE turn for the summary.
-      // But if we already did that turn (wasForcedToStop is false), then we are done.
-      if (!wasForcedToStop) {
-        isDone = true;
-      }
+      if (!wasForcedToStop) isDone = true;
       continue;
     }
+
     const readCalls = toolCalls.filter((tc) => isReadOnlyTool(tc.name));
     const writeCalls = toolCalls.filter((tc) => !isReadOnlyTool(tc.name));
     const resultBlocks = [];
@@ -228,7 +269,7 @@ export async function runAgent(userInput, callbacks = {}) {
         readCalls.map((tc) =>
           toolLimit(async () => {
             onToolCall(tc.name, tc.args);
-            const result = await dispatchTool(tc.name, tc.args);
+            const result = await toolset.dispatch(tc.name, tc.args);
             onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
             return { type: "tool_result", id: tc.id, name: tc.name, output: String(result) };
           })
@@ -240,52 +281,52 @@ export async function runAgent(userInput, callbacks = {}) {
     // Writes: sequential
     for (const tc of writeCalls) {
       onToolCall(tc.name, tc.args);
-      const result = await dispatchTool(tc.name, tc.args);
+      const result = await toolset.dispatch(tc.name, tc.args);
       onToolResult(tc.name, typeof result === "string" ? result.slice(0, 100) : "done");
       resultBlocks.push({ type: "tool_result", id: tc.id, name: tc.name, output: String(result) });
     }
 
     memory.push({ role: "tool", blocks: resultBlocks });
 
-    // ─── FAILURE DETECTION ──────────────────────────────────────────
+    // ─── FAILURE DETECTION ──────────────────────────────────────────────
     let turnHasSuccess = false;
     for (const b of resultBlocks) {
       const out = String(b.output);
-      if (!out.startsWith("❌") && !out.startsWith("🛑") && !out.toLowerCase().includes("error")) {
+      // Only count as failure if it's a structural tool error (starts with emoji)
+      const isToolError = out.startsWith("❌") || out.startsWith("🛑") || out.startsWith("🚫");
+      if (!isToolError) {
         turnHasSuccess = true;
       }
     }
-    if (turnHasSuccess) {
-      consecutiveFailures = 0;
-    } else {
-      consecutiveFailures++;
-    }
+    consecutiveFailures = turnHasSuccess ? 0 : consecutiveFailures + 1;
 
     if (consecutiveFailures >= 3) {
       const msg = "\n⚠️ Persistent failures detected — stopping to provide a conclusion.\n";
       onText(msg);
       finalResponse += msg;
 
-      memory.push({ role: "tool", blocks: [{ 
-        type: "tool_result", 
-        id: "failure_break", 
-        name: "system", 
-        output: "PERSISTENT FAILURES: Multiple tools have failed consecutively. STOP all actions now. Provide your final [RESULT] summary explaining the root cause (e.g. Access Denied, Connection Refused) and manual fix instructions." 
-      }]});
-      
-      // Let it loop one last time with no tool calls to get the text summary
+      memory.push({
+        role: "tool",
+        blocks: [{
+          type: "tool_result",
+          id: "failure_break",
+          name: "system",
+          output: "PERSISTENT FAILURES: Multiple tools have failed consecutively. STOP all actions now. Provide your final [RESULT] summary explaining the root cause and manual fix instructions.",
+        }],
+      });
+      // One more loop iteration will produce the text summary with no tool calls.
     }
 
-    // P0: Adaptive context window management — compress if turn gets too long.
-    const nextMemory = await compressMemoryIfNeeded(memory);
+    // Adaptive context window: compress once per turn. saveMemory will NOT
+    // compress again — see src/core/memory.js.
+    const nextMemory = await compressMemoryIfNeeded(memory, signal);
     if (nextMemory !== memory) {
-      // If compressed, replace the local memory object.
       memory.length = 0;
       memory.push(...nextMemory);
     }
   }
 
-  if (iterations >= maxIterations) {
+  if (iterations >= runtime.maxIterations) {
     const msg = "\n⚠️ Max iterations reached. Stopping agent loop.\n";
     onText(msg);
     finalResponse += msg;
@@ -293,6 +334,8 @@ export async function runAgent(userInput, callbacks = {}) {
 
   onDone();
 
-  await saveMemory(memory, signal);
+  // saveMemory is given the already-compressed memory to persist;
+  // it does NOT re-compress.
+  await saveMemory(memory, signal).catch((err) => log.error("saveMemory:", err));
   return finalResponse;
 }

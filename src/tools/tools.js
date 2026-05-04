@@ -9,6 +9,7 @@ import delete_file from "./handlers/delete_file.js";
 import get_file_info from "./handlers/get_file_info.js";
 import run_command from "./handlers/run_command.js";
 import batch_edit from "./handlers/batch_edit.js";
+import replace_lines from "./handlers/replace_lines.js";
 import { terminateChildProcess } from "./shell-runner.js";
 
 // ===========================
@@ -25,6 +26,7 @@ export const tools = {
   get_file_info,
   run_command,
   batch_edit,
+  replace_lines,
 };
 
 // ===========================
@@ -36,7 +38,11 @@ export const toolDeclarations = [
     description: "Read file content with line numbers. Use this to understand code before making changes.",
     parameters: {
       type: "OBJECT",
-      properties: { path: { type: "STRING", description: "File path to read" } },
+      properties: {
+        path: { type: "STRING", description: "File path to read" },
+        startLine: { type: "NUMBER", description: "Line number to start reading from (default: 1)" },
+        endLine: { type: "NUMBER", description: "Line number to stop reading at (default: end of file)" },
+      },
       required: ["path"],
     },
   },
@@ -149,6 +155,21 @@ export const toolDeclarations = [
         },
       },
       required: ["edits"],
+    },
+  },
+  {
+    name: "replace_lines",
+    description:
+      "Replace a range of lines in a file with new content. MUCH faster than edit_file for large changes — no need to match exact strings, just specify line numbers. Use read_file first to identify the line range, then replace. Can also delete lines (set content to empty string) or insert (set startLine = endLine = insertion point).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        path: { type: "STRING", description: "File path to edit" },
+        startLine: { type: "NUMBER", description: "First line to replace (1-indexed, inclusive)" },
+        endLine: { type: "NUMBER", description: "Last line to replace (1-indexed, inclusive)" },
+        content: { type: "STRING", description: "Replacement content (replaces the entire line range). Use empty string to delete lines." },
+      },
+      required: ["path", "startLine", "endLine", "content"],
     },
   },
 ];

@@ -5,6 +5,7 @@ import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
 import { getPrompter } from "../../ui/prompter.js";
 import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
+import { loadConfig } from "../../config/config.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ edits }) {
@@ -23,7 +24,8 @@ export default async function ({ edits }) {
   }
 
   const overallResults = [];
-  const autoApprove = process.env[DIFF_AUTO_APPROVE_ENV] === "1" || !process.stdin.isTTY;
+  const cfg = loadConfig();
+  const autoApprove = cfg.autoApprove || process.env[DIFF_AUTO_APPROVE_ENV] === "1" || !process.stdin.isTTY;
 
   for (const [filePath, specificEdits] of fileEdits) {
     try {

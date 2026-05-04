@@ -24,6 +24,7 @@ const defaultConfig = {
   maxMemoryTurns: MAX_MEMORY_TURNS_DEFAULT,
   promptVersion: "senior-v1.production", // Default to the new senior version
   mcpServers: {},
+  autoApprove: false,
 };
 
 const prompts = {

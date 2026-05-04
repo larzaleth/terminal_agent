@@ -20,6 +20,11 @@ export function renderDiff(oldText, newText, filePath = "", opts = {}) {
   out += chalk.cyan.bold(`\n${line}\n`);
   out += chalk.cyan.bold(` 📝 DIFF: ${filePath}\n`);
   out += chalk.cyan.bold(`${line}\n`);
+  // Standard unified-diff file markers so tools / tests can key on them.
+  if (filePath) {
+    out += chalk.red(`--- ${filePath}\n`);
+    out += chalk.green(`+++ ${filePath}\n`);
+  }
 
   for (let p = 0; p < parts.length; p++) {
     const part = parts[p];

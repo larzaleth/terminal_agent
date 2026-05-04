@@ -1,111 +1,74 @@
-# AI Coding Agent — PRD
+# terminal_agent — PRD & Changelog
 
-## Original Problem Statement
-User request: _"coba lihat repo saya dan analis, review dan berikan feedback apa saja yg bisa saya lakukan untuk improving"_, which evolved over the session into:
+## Original problem statement
+User minta audit codebase `terminal_agent` (https://github.com/larzaleth/terminal_agent) dan implementasi multi-agent architecture — khususnya read-only analyzer agent — dengan clean refactor (bukan monkey-patch).
 
-1. Build a TUI layer using `ink` with a multi-pane hybrid layout, interactive diffs, and live tool execution panels.
-2. Fix API-key leak issues and TUI scrolling/layout bugs.
-3. Handle long-running task hangs/lags and add Markdown support in the TUI container.
+## Application purpose
+CLI coding agent mirip Cursor/Aider: multi-provider LLM (Gemini/OpenAI/Anthropic), semantic RAG, MCP integration, interactive diff preview, cost tracking. Node.js ESM, Ink TUI + readline fallback.
 
-User language: **Bahasa Indonesia**.
+## User personas
+1. **Solo developer** — pakai di terminal, modifikasi code dengan safety rails
+2. **Code reviewer** — pakai read-only analyzer untuk audit
+3. **Agent builder** — bikin custom sub-agent untuk workflow khusus
 
-## Project Type
-Node.js CLI application (not a web app) with a rich Terminal UI powered by `ink` + `react`.
+## Core requirements (static)
+- Multi-provider LLM dengan unified message format
+- Tool registry modular (10 built-in + MCP dynamic)
+- Safety: path traversal block, command classifier, atomic writes, backup
+- Cost tracking (USD + IDR)
+- Memory persistence + compression
+- Session save/resume, undo
 
-## Architecture
-```
-/app
-├── bin/cli.js
-├── src/
-│   ├── commands/slash.js
-│   ├── config/{config.js, constants.js}
-│   ├── core/{agents.js, memory.js, planner.js, transcript.js}
-│   ├── llm/{llm.js, cost-tracker.js, providers/*}
-│   ├── mcp/client.js
-│   ├── rag/{semantic.js, cache.js}
-│   ├── tools/{tools.js, command-classifier.js, diff.js}
-│   ├── ui/
-│   │   ├── App.js, run.js, prompter.js, useTerminalSize.js,
-│   │   ├── markdown.js, toolStream.js, h.js
-│   │   └── components/{Header, Footer, Sidebar, MessageList, Message,
-│   │                   InputBox, DiffPrompt, ConfirmPrompt, ToolCallBlock}
-│   └── utils/utils.js
-├── tests/
-│   ├── chunking, command-classifier, diff, providers, utils
-│   └── ui/{components, markdown}
-├── docs/ (14 markdown files)
-└── .env.example
-```
+## What's been implemented (Jan 2026, Phase 1)
+### Fixes (P0 blockers)
+- ESLint error di run_command.js (empty else) — FIXED
+- 23 failing tests (Ink UI components, mouse parser, reducer, diff) — FIXED, 145/145 pass
+- Loop detection false-positive (was global cumulative) — rewritten to sliding window (5 calls, threshold 3)
+- Double memory compression — saveMemory no longer compresses
+- Silent embedding failures — log.warn + counter
 
-## Core Capabilities (implemented)
-- Multi-provider LLM: Gemini, OpenAI, Anthropic (via `src/llm/providers/*`)
-- MCP (Model Context Protocol) client via `@modelcontextprotocol/sdk`
-- Semantic RAG with smart chunking + pre-normalized embedding cache
-- 9 built-in tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `grep_search`, `create_dir`, `delete_file`, `get_file_info`, `run_command`) with classifier-based safety
-- Interactive diff preview with approve/reject/manual
-- Live streaming `run_command` (spawn, not execSync) with 60s timeout
-- `/help`, `/save`, `/model`, `/clear`, `/mcp` slash commands
-- Rich TUI: multi-pane (chat + sidebar), scrollable history (PgUp/PgDn/G),
-  tool focus with arrows/space, Esc-to-cancel, alternate screen buffer.
+### Multi-agent architecture (clean refactor, NO monkey-patch)
+- `runAgent()` now accepts `{ definition }` for tool filter + prompt override + model/provider/maxIterations
+- `src/core/agents/registry.js` — register/get/list/has, frozen definitions
+- Built-in: `default` (full) + `analyzer` (read-only, 4 tools, disableMcp)
+- CLI: `myagent --agent <name> "request..."` (one-shot mode, stdout=result, stderr=progress)
+- Slash: `/agent list | info <n> | run <n> <req>`
+- 14 new tests (7 registry + 7 integration with stub provider)
 
-## Implemented this fork session (2026-02)
-### Round 1 — Bug fixes
-- **P0 fix — TUI freeze on long turns**: coalesced streaming tokens into a
-  ref-backed buffer flushed every ~60ms in `src/ui/App.js` so React no longer
-  re-renders on every Gemini token. Final flush on turn end / error.
-- **P0 fix — tool stream wiring**: `setToolStreamCallback` is now actually
-  registered in `App.js` useEffect and forwards chunks into the reducer
-  (`tool_stream_chunk`). Live stdout from `npm install` etc. now surfaces in
-  the expanded tool block instead of being swallowed.
-- **P1 fix — Markdown in assistant messages**: `Markdown` component is now
-  used in `components/Message.js` for assistant/system text (user input stays
-  as plain text). Fenced code blocks get a gray-bordered box.
-- **UX polish**: `ToolCallBlock` renders `liveOutput` while a tool is running
-  so the user sees progress; falls back to `(running…)` placeholder.
+### Docs
+- `AUDIT.md` — 30 prioritized tasks (P0 done, P1/P2 backlog)
+- `docs/multi-agent-architecture.md` — pattern + contract + test recipe
+- `docs/commands.md` — `/agent` section
+- `IMPROVEMENTS.md` — Phase 1 changelog + P1/P2 backlog
 
-### Round 4 — Drag-to-select + copy-to-clipboard
-- **OSC 52 clipboard writer** (`src/ui/clipboard.js`): universal terminal
-  escape sequence — no native binary or auth needed, works over SSH and
-  inside tmux (when `set-clipboard on`). 75 KB payload cap with a visible
-  truncation marker.
-- **Drag detection**: mouse reporting upgraded from mode 1000 → 1002 so
-  motion with a button held is reported. `mouse.js` now emits
-  `{type: "drag", x, y}` events; press tracks `dragStartY`; release
-  with Δy≥1 triggers the copy, release with Δy=0 is treated as a click.
-- **Selection state + live footer**: reducer gained `selection`,
-  `toast`, and two actions per pair. Footer shows "📐 Selecting N rows —
-  release to copy" during drag, and a 3-second toast ("📋 Copied 142
-  chars") on completion.
-- **Text extraction**: `MessageList` populates `blockRegions` alongside
-  `toolRegions` on every render, so drag release can resolve Y range →
-  block text without touching any screen buffer.
-- **`y` yank shortcut**: single keypress copies the most relevant chunk —
-  focused tool result first, else last assistant message, else current
-  turn. Works in idle and scroll modes.
-- **`/copy [last|tool|turn|all]` command**: explicit TUI-only subcommand
-  intercepted in `App.js` (stdout is muted). Non-TUI invocation prints
-  a helpful hint.
+## Prioritized backlog (P1 — next phase)
+- T-08: Backup cleanup (TTL / keep-N)
+- T-09: USD→IDR rate env var or cached API
+- T-10: .gitignore-aware indexing (npm `ignore`)
+- T-11: Async/debounced updateIndex after write
+- T-12: API key encryption (keytar)
+- T-13: Token budget per turn
+- T-15: Provider message-format unit tests
+- T-16: MCP client unit tests
+- T-17: Tool output truncation marker
+- T-18: Anthropic max_tokens from config
+- T-19: Signal propagation to run_command child
 
-Tests: **+15 tests** covering OSC 52 round-trip, extractors, drag sequence
-parsing, reducer selection/toast actions, block region range extraction.
-Total **103 tests passing** (`yarn test` now runs `--test-concurrency=1`
-to sidestep Node's flaky IPC serializer).
+## Backlog (P2 — polish)
+- Unused vars warnings (16)
+- /prompt slash command
+- /stats parity in readline mode
+- Custom tool plugin API
+- Sandboxed command execution (Docker)
+- Multimodal input
+- Telemetry dashboard
+- Prompt-injection sanitization in RAG context
+- MCP signature check
+- Audit log (.agent_audit.log)
+- Inter-agent delegation tool
+- README v2.4 → v2.5.1 sync
 
-## Backlog (prioritized)
-- **P2**: Tab autocomplete for slash commands (`SLASH_COMMANDS` exported).
-- **P2**: Command palette mode (Ctrl+K) with fuzzy search.
-- **P3**: Theme system (light / dark / high-contrast) via env or `/theme`.
-- **P3**: Visual highlight of the selection range during drag (needs Ink
-  layout measurements; footer-only feedback today).
-- **P3**: Refine mouse click target Y — currently uses a rough chatTopY=4
-  offset; could read from rendered layout once ink exposes measurements.
-
-## Testing
-- `yarn test` — node native test runner + `ink-testing-library` (51 tests)
-- `yarn lint` — eslint flat config (clean)
-- No remote backend / no curl flows; CLI is exercised via `node bin/cli.js`.
-
-## Credentials / Keys
-- API keys live in `.env` (copy from `.env.example`). Supports
-  `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. No keys
-  are committed.
+## Next Actions
+- User reviews Phase 1 changes, commits via "Save to GitHub" feature
+- Phase 2: pick P1 items based on priority
+- E2E test with real LLM (needs user's GEMINI/OPENAI/ANTHROPIC key)

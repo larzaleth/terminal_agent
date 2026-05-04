@@ -14,6 +14,7 @@ export async function helpCommand() {
   ${chalk.white("/model [id]")}           Show or change the active model
   ${chalk.white("/save [file]")}          Export transcript to markdown
   ${chalk.white("/mcp")}                  List connected MCP servers
+  ${chalk.white("/yolo [on|off]")}        Toggle full automation (no permission prompts)
   ${chalk.white("exit / quit")}           Exit the agent
 `));
 }

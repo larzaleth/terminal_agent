@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { loadConfig } from "../../config/config.js";
 import { getPrompter } from "../../ui/prompter.js";
 
 /**
@@ -17,6 +18,9 @@ export async function exists(p) {
  * Ask user for permission to execute a command or destructive action.
  */
 export async function confirmExecution(cmd, reason) {
+  const cfg = loadConfig();
+  if (cfg.autoApprove) return true;
+
   const tag = reason ? ` (${reason})` : "";
   return getPrompter().confirm({ message: `Agent wants to run${tag}: \`${cmd}\``, reason });
 }

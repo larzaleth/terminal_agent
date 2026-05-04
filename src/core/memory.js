@@ -52,11 +52,11 @@ function migrateMessage(msg) {
 }
 
 // ===========================
-// 🔹 SAVE
+// 🔹 SAVE — does NOT re-compress. Compression is the caller's job
+// (runAgent compresses once per turn via compressMemoryIfNeeded).
 // ===========================
-export async function saveMemory(memory, signal) {
-  const compressed = await compressMemoryIfNeeded(memory, signal);
-  writeFileAtomicSync(MEMORY_FILE, JSON.stringify(compressed, null, 2));
+export async function saveMemory(memory) {
+  writeFileAtomicSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
 }
 
 /**
@@ -121,7 +121,7 @@ async function summarizeMemory(memory, signal) {
   try {
     const provider = getProvider(config.provider || "gemini");
     const prompt = `Summarize this conversation history into a concise context paragraph.
-Focus on: what was discussed, what files were modified, what decisions were made, and any important patterns or conventions discovered.
+Focus on: what was the original goal, what specific files were modified and what changes were made, what is the current progress, what steps are remaining, and any important patterns or conventions discovered.
 
 Conversation:
 ${textParts.slice(0, 4000)}

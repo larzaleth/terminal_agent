@@ -3,6 +3,7 @@ import { h } from "../h.js";
 
 export function Header({ provider, model, cost, iteration, maxIterations }) {
   const costStr = `$${Number(cost || 0).toFixed(6)}`;
+  const providerLabel = provider ? String(provider).toUpperCase() : "";
   return h(
     Box,
     {
@@ -16,7 +17,11 @@ export function Header({ provider, model, cost, iteration, maxIterations }) {
       h(Text, { bold: true, color: "white" }, "AI AGENT"),
       h(Text, { color: "white", dimColor: true }, "v2.5.0"),
       h(Text, { color: "white" }, "┃"),
-      h(Text, { color: "cyanBright", bold: true }, model)
+      providerLabel
+        ? h(Text, { color: "yellowBright", bold: true }, providerLabel)
+        : null,
+      providerLabel ? h(Text, { color: "white" }, "┃") : null,
+      h(Text, { color: "cyanBright", bold: true }, model || "")
     ),
     h(
       Box,
@@ -28,9 +33,7 @@ export function Header({ provider, model, cost, iteration, maxIterations }) {
             Box,
             { gap: 1 },
             h(Text, { color: "white" }, "┃"),
-            h(Text, { color: "white" }, "STEP"),
-            h(Text, { color: "yellowBright", bold: true }, `${iteration}`),
-            h(Text, { color: "white", dimColor: true }, `/${maxIterations}`)
+            h(Text, { color: "white" }, `STEP ${iteration}/${maxIterations || 25}`)
           )
         : null
     )

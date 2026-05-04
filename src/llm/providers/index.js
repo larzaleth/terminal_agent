@@ -39,6 +39,15 @@ export function clearProviderCache() {
   _cache.clear();
 }
 
+/**
+ * Test-only: inject a pre-constructed provider instance so test code can
+ * stub `stream()` / `generate()` without real API keys. Not for production.
+ * @internal
+ */
+export function _registerProviderForTests(name, instance) {
+  _cache.set(name, instance);
+}
+
 // Infer provider from a model id for /model shortcuts like "gpt-4o" or "claude-3-5-sonnet-latest".
 export function inferProvider(modelId) {
   if (!modelId) return null;

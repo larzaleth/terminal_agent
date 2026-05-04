@@ -5,10 +5,12 @@ import { backupFile } from "../../utils/backup.js";
 import { diffStats } from "../diff.js";
 import { getPrompter } from "../../ui/prompter.js";
 import { DIFF_AUTO_APPROVE_ENV } from "../../config/constants.js";
+import { loadConfig } from "../../config/config.js";
 import { exists, UNSAFE_PATH_MSG } from "./base.js";
 
 export default async function ({ path: filePath, target, replacement }) {
   try {
+    const cfg = loadConfig();
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) {
       return `❌ Error: File not found at '${filePath}'.\n💡 Tip: Use write_file to create new files.`;
@@ -34,6 +36,7 @@ export default async function ({ path: filePath, target, replacement }) {
 
     // Show the diff preview (unless auto-approved via env var, non-TTY, or very small change).
     const autoApprove =
+      cfg.autoApprove ||
       process.env[DIFF_AUTO_APPROVE_ENV] === "1" || 
       !process.stdin.isTTY ||
       (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)

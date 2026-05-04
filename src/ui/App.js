@@ -18,6 +18,10 @@ import { setToolStreamCallback, clearToolStreamCallback } from "./toolStream.js"
 import { setMouseCallback, clearMouseCallback } from "./mouse.js";
 import { findToolAt, extractTextInRange } from "./clickRegistry.js";
 import {
+  MAX_ITERATIONS_DEFAULT,
+  DIFF_AUTO_APPROVE_ENV,
+} from "../config/constants.js";
+import {
   writeClipboard,
   extractLastAssistant,
   extractFocusedTool,
@@ -322,7 +326,7 @@ export function App() {
           onPlan: (plan) => dispatch({ type: "add_plan", steps: plan }),
           onThinking: () => {
             iter += 1;
-            dispatch({ type: "set_iteration", iteration: iter, maxIterations: config.maxIterations || 25 });
+            dispatch({ type: "set_iteration", iteration: iter, maxIterations: config.maxIterations || MAX_ITERATIONS_DEFAULT });
             dispatch({ type: "set_status_message", message: "" });
           },
           onText: (t) => {

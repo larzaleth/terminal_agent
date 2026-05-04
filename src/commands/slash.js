@@ -20,6 +20,10 @@ import { mcpCommand } from "./handlers/mcp.js";
 import { copyCommand } from "./handlers/copy.js";
 import { undoCommand } from "./handlers/undo.js";
 import { sessionCommand } from "./handlers/session.js";
+import { agentCommand } from "./handlers/agent.js";
+import { yoloCommand } from "./handlers/yolo.js";
+// Side-effect import: registers built-in agent definitions.
+import "../core/agents/index.js";
 
 const HANDLERS = {
   "/help": helpCommand,
@@ -41,6 +45,9 @@ const HANDLERS = {
   "/session": sessionCommand,
   "/resume": (args) => sessionCommand(["resume", ...args]),
   "/load": (args) => sessionCommand(["resume", ...args]),
+  "/agent": agentCommand,
+  "/agents": agentCommand,
+  "/yolo": yoloCommand,
 };
 
 export const SLASH_COMMANDS = Object.keys(HANDLERS);

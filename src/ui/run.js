@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { runAgent } from "../core/agents.js";
 import { handleSlashCommand } from "../commands/slash.js";
 import { loadConfig } from "../config/config.js";
+import { MAX_ITERATIONS_DEFAULT } from "../config/constants.js";
 import { globalTracker } from "../llm/cost-tracker.js";
 import { shutdownMcp } from "../mcp/client.js";
 import { setPrompter, resetPrompter } from "./prompter.js";
@@ -180,7 +181,7 @@ export function startTui() {
             iter++;
             // Only add newline if it's not the very first step
             const prefix = iter === 1 ? "" : "\n";
-            process.stdout.write(prefix + chalk.dim(`· Thinking (${iter}/${currentConfig.maxIterations || 50})...\n`));
+            process.stdout.write(prefix + chalk.dim(`· Thinking (${iter}/${currentConfig.maxIterations || MAX_ITERATIONS_DEFAULT})...\n`));
             isAtLineStart = true;
           },
           onText: (t) => {

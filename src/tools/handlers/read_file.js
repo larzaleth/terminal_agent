@@ -5,7 +5,7 @@ import { isSafePath } from "../../utils/utils.js";
 import { MAX_TOOL_OUTPUT_CHARS } from "../../config/constants.js";
 import { exists, UNSAFE_PATH_MSG, FILE_PREVIEW_NOTICE } from "./base.js";
 
-async function readFilePreview(filePath, maxChars = MAX_TOOL_OUTPUT_CHARS) {
+async function readFileRange(filePath, startLine = 1, endLine = null, maxChars = MAX_TOOL_OUTPUT_CHARS) {
   const previewLimit = Math.max(256, maxChars - FILE_PREVIEW_NOTICE.length);
   const lines = [];
   let currentLength = 0;
@@ -18,14 +18,14 @@ async function readFilePreview(filePath, maxChars = MAX_TOOL_OUTPUT_CHARS) {
   try {
     for await (const line of reader) {
       lineNumber++;
+      if (lineNumber < startLine) continue;
+      if (endLine !== null && lineNumber > endLine) break;
+
       const numberedLine = `${lineNumber}: ${line}`;
       const additionLength = numberedLine.length + (lines.length > 0 ? 1 : 0);
 
       if (currentLength + additionLength > previewLimit) {
         truncated = true;
-        if (lines.length === 0 && previewLimit > 0) {
-          lines.push(numberedLine.slice(0, previewLimit));
-        }
         break;
       }
 
@@ -38,10 +38,11 @@ async function readFilePreview(filePath, maxChars = MAX_TOOL_OUTPUT_CHARS) {
   }
 
   const output = lines.join("\n");
-  return truncated ? `${output}${FILE_PREVIEW_NOTICE}` : output;
+  const prefix = startLine > 1 ? `... (skipping first ${startLine - 1} lines)\n` : "";
+  return truncated ? `${prefix}${output}${FILE_PREVIEW_NOTICE}` : `${prefix}${output}`;
 }
 
-export default async function ({ path: filePath }) {
+export default async function ({ path: filePath, startLine, endLine }) {
   try {
     if (!isSafePath(filePath)) return UNSAFE_PATH_MSG;
     if (!(await exists(filePath))) {
@@ -53,7 +54,7 @@ export default async function ({ path: filePath }) {
       return `❌ Error: '${filePath}' is a directory, not a file.\n💡 Tip: Use list_dir to view directory contents.`;
     }
 
-    return await readFilePreview(filePath);
+    return await readFileRange(filePath, startLine, endLine);
   } catch (err) {
     if (err.code === "EACCES") return `❌ Error: Permission denied for '${filePath}'.`;
     if (err.code === "EISDIR") return `❌ Error: '${filePath}' is a directory.`;

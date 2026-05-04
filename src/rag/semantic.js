@@ -7,6 +7,7 @@ import { normalizeProviderName } from "../config/provider-env.js";
 import { globalTracker } from "../llm/cost-tracker.js";
 import { getProvider, inferProvider, ProviderError } from "../llm/providers/index.js";
 import { getCachedResponse, setCachedResponse } from "./cache.js";
+import { log } from "../utils/logger.js";
 import {
   INDEX_FILE,
   EMBEDDING_BATCH_SIZE,
@@ -205,6 +206,8 @@ export async function buildIndex(folderPath) {
   const limit = pLimit(EMBEDDING_CONCURRENCY);
 
   const startTime = Date.now();
+  let failedChunks = 0;
+  let successfulChunks = 0;
 
   for (const file of files) {
     try {
@@ -218,6 +221,8 @@ export async function buildIndex(folderPath) {
           batch.map((chunk) =>
             limit(() =>
               embed(chunk).catch((err) => {
+                failedChunks++;
+                log.warn(`embed failed for chunk in ${file}: ${err.message}`);
                 return null;
               })
             )
@@ -226,6 +231,7 @@ export async function buildIndex(folderPath) {
 
         batch.forEach((chunk, idx) => {
           if (vectors[idx]) {
+            successfulChunks++;
             index.push({
               file,
               content: chunk,
@@ -235,12 +241,19 @@ export async function buildIndex(folderPath) {
           }
         });
       }
-    } catch {
-      // Indexing failed for this file, skip and continue
+    } catch (err) {
+      log.warn(`indexing failed for ${file}: ${err.message}`);
     }
   }
 
   await writeFileAtomic(INDEX_FILE, JSON.stringify(index));
+
+  if (failedChunks > 0) {
+    log.warn(
+      `buildIndex: ${successfulChunks} chunks indexed, ${failedChunks} failed. ` +
+      `Check API key / quota if this persists.`
+    );
+  }
 
   // Refresh in-memory cache so subsequent loadIndex() calls skip the disk read.
   const stat = await fs.stat(INDEX_FILE);

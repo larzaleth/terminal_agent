@@ -14,6 +14,7 @@ Every command starts with `/`. Type `/help` in-session to see the full list.
 | [`/cost`](#cost) | — | View cost reports |
 | [`/save`](#save-file) | — | Export transcript to markdown |
 | [`/mcp`](#mcp) | — | Manage MCP server connections |
+| [`/agent`](#agent) | `/agents` | List / inspect / invoke specialized agents |
 | `exit` / `quit` | — | Leave the agent |
 
 ---
@@ -268,6 +269,58 @@ Without args, **connects** to all MCP servers in `agent.config.json` and lists t
 ```
 
 See [MCP Servers](./mcp.md) for setup.
+
+## `/agent`
+
+List, inspect, or invoke a specialized agent. Agents are **scoped sub-configurations** of the main agent loop — each with its own toolset, system prompt, and (optionally) model / provider.
+
+### Subcommands
+
+```
+/agent               # same as /agent list
+/agent list          # show registered agents
+/agent info <name>   # show full definition (tools, model, prompt preview)
+/agent run <name> <your request>   # invoke inline
+```
+
+### Example
+
+```
+🧑 > /agent list
+
+🤖 Registered agents:
+
+  default      (tools: all)  Full-capability coding agent — all built-in tools + MCP.
+  analyzer     (tools: 4)    Read-only code auditor.
+
+🧑 > /agent run analyzer audit src/core and list P0 issues
+
+🤖 Invoking 'analyzer' agent...
+  ⟳ list_dir {"dir":"src/core"}
+  ✓ list_dir  agents.js  memory.js  planner.js  transcript.js
+  ⟳ read_file {"path":"src/core/agents.js"}
+  ...
+```
+
+### Built-in agents
+
+- **`default`** — classic full-capability coding agent (all tools, senior prompt).
+- **`analyzer`** — read-only auditor. Cannot write, edit, delete, or run anything.
+
+### Creating your own
+
+Add a file under `src/core/agents/definitions/<name>.js` following the [`AgentDefinition`](../src/core/agents/types.js) shape, then register it in `src/core/agents/index.js`. See [`docs/multi-agent-architecture.md`](./multi-agent-architecture.md) for the full pattern.
+
+### One-shot CLI mode
+
+Skip the interactive session entirely:
+
+```bash
+myagent --agent analyzer "audit src/core"
+myagent --agent analyzer . > audit.md
+```
+
+Output goes to stdout, progress/tool-calls to stderr — perfect for redirecting or piping.
 
 ## Exit Commands
 

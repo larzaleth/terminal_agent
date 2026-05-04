@@ -6,15 +6,15 @@ import { Markdown } from "../markdown.js";
 function roleHeader(role) {
   switch (role) {
     case "user":
-      return h(Text, { bold: true, color: "green" }, "YOU");
+      return h(Text, { bold: true, color: "green" }, "You");
     case "assistant":
-      return h(Text, { bold: true, color: "cyan" }, "AGENT");
+      return h(Text, { bold: true, color: "cyan" }, "Assistant");
     case "tool":
-      return h(Text, { bold: true, color: "yellow" }, "TOOL");
+      return h(Text, { bold: true, color: "yellow" }, "Tool");
     case "system":
-      return h(Text, { bold: true, color: "magenta" }, "PLAN");
+      return h(Text, { bold: true, color: "magenta" }, "System");
     default:
-      return h(Text, { bold: true }, role.toUpperCase());
+      return h(Text, { bold: true }, role);
   }
 }
 

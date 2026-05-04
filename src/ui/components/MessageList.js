@@ -3,6 +3,59 @@ import { h } from "../h.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
 
 /**
+ * Given the currently-visible messages and whether a sticky header is shown,
+ * compute the Y-range each tool_call block occupies inside the chat pane.
+ *
+ * Heuristic rows-per-block:
+ *   - collapsed tool_call: 1 row
+ *   - expanded tool_call:  2 rows of chrome + result line count (clamped)
+ *   - text block:          ~max(1, ceil(len / 80))
+ *   - plan block:          1 row per step
+ *   - role header:         1 row per message
+ *
+ * Coordinates are chat-pane-relative (0-based). `hasHeader` shifts everything
+ * down by 1 so the caller doesn't need to do arithmetic.
+ */
+export function computeToolRegions(messages, hasHeader = false) {
+  const regions = [];
+  let y = hasHeader ? 1 : 0;
+
+  for (const msg of messages || []) {
+    // Role header
+    y += 1;
+    for (const block of msg.blocks || []) {
+      if (block.type === "text") {
+        const text = block.text || "";
+        const lines = Math.max(1, text.split("\n").length);
+        y += lines;
+      } else if (block.type === "plan") {
+        y += Math.max(1, (block.steps || []).length);
+      } else if (block.type === "tool_call") {
+        if (block.expanded) {
+          const resultText = typeof block.result === "string" ? block.result : "";
+          const liveText = typeof block.liveOutput === "string" ? block.liveOutput : "";
+          const body = resultText || liveText;
+          const bodyLines = body ? Math.min(20, body.split("\n").length) : 1;
+          const startY = y;
+          // 2 chrome rows (header + args) + body
+          const span = 2 + bodyLines;
+          const endY = y + span - 1;
+          regions.push({ toolId: block.id, startY, endY });
+          y = endY + 1;
+        } else {
+          regions.push({ toolId: block.id, startY: y, endY: y });
+          y += 1;
+        }
+      }
+    }
+    // Inter-message spacing
+    y += 1;
+  }
+
+  return regions;
+}
+
+/**
  * MessageList with virtualized-ish scrolling.
  * It takes the full history and slices it based on scrollOffset.
  */

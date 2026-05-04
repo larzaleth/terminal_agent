@@ -163,12 +163,19 @@ export function reducer(state, action) {
       };
     }
     case "scroll": {
+      const total = state.finalized.length;
+      const maxOffset = Math.max(0, total - 1);
       let next = state.scrollOffset + action.delta;
       if (next < 0) next = 0;
+      if (next > maxOffset) next = maxOffset;
       return { ...state, scrollOffset: next };
     }
     case "scroll_reset":
       return { ...state, scrollOffset: 0 };
+    case "set_selection":
+      return { ...state, selection: action.selection };
+    case "clear_selection":
+      return { ...state, selection: null };
     case "set_status_message":
       return { ...state, statusMessage: action.message };
     case "set_prompt":

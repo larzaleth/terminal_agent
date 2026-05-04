@@ -8,6 +8,7 @@ import { getGlobalEnvPath, loadConfig, loadGlobalEnv } from "../src/config/confi
 import { getProviderApiKeySpec, upsertEnvValue } from "../src/config/provider-env.js";
 import { handleSlashCommand } from "../src/commands/slash.js";
 import { runAgent } from "../src/core/agents.js";
+import { getAgent, listAgents } from "../src/core/agents/index.js";
 import { globalTracker } from "../src/llm/cost-tracker.js";
 import { shutdownMcp } from "../src/mcp/client.js";
 import { startWatcher, stopWatcher } from "../src/rag/watcher.js";
@@ -51,7 +52,7 @@ function showBanner() {
   const provider = getProviderApiKeySpec(config.provider).label;
   console.log(chalk.cyan.bold(`
 ╔══════════════════════════════════════╗
-║     🤖 AI Coding Agent v2.4        ║
+║     🤖 AI Coding Agent v2.5.1      ║
 ║     Powered by ${provider.padEnd(18)}║
 ╚══════════════════════════════════════╝`));
   console.log(chalk.dim("  Type your request, or use commands:"));
@@ -147,11 +148,88 @@ async function runReadline() {
 }
 
 // ===========================
-// 🚀 ENTRY — Hybrid TUI / Readline
+// 🤖 ONE-SHOT AGENT MODE (--agent <name> "request...")
+// ===========================
+async function runOneShotAgent(agentName, request) {
+  const def = getAgent(agentName);
+  const startCost = globalTracker.getStats(def.model || loadConfig().model).cost.total;
+  const startMs = Date.now();
+
+  await runAgent(request, {
+    definition: def,
+    onPlan: () => {},
+    onThinking: () => {},
+    onText: (t) => process.stdout.write(t),
+    onToolCall: (name, args) => {
+      const summary = Object.entries(args || {})
+        .map(([k, v]) => `${k}=${String(v).slice(0, 30)}`)
+        .join(", ");
+      process.stderr.write(chalk.blue(`\n  ⟳ ${name}`) + chalk.gray(` ${summary}\n`));
+    },
+    onToolResult: (name) => {
+      process.stderr.write(chalk.green(`  ✓ ${name}\n`));
+    },
+    onError: (err) => {
+      log.error(err);
+      process.stderr.write(chalk.red(`\n❌ ${err.message}\n`));
+    },
+  });
+
+  const endCost = globalTracker.getStats(def.model || loadConfig().model).cost.total;
+  process.stderr.write(
+    chalk.dim(
+      `\n⏱ ${formatDuration(Date.now() - startMs)} │ 💰 $${(endCost - startCost).toFixed(6)}\n`
+    )
+  );
+}
+
+// ===========================
+// 🚀 ENTRY — Hybrid TUI / Readline / One-shot
 // ===========================
 async function main() {
   loadGlobalEnv();
   const config = loadConfig();
+
+  // One-shot agent mode: `myagent --agent analyzer "audit src/"`
+  const agentFlagIdx = process.argv.indexOf("--agent");
+  if (agentFlagIdx >= 0) {
+    // Side-effect import to ensure registry is populated.
+    await import("../src/core/agents/index.js");
+    const agentName = process.argv[agentFlagIdx + 1];
+    if (!agentName || agentName.startsWith("-")) {
+      console.error(chalk.red("Usage: myagent --agent <name> [request...]"));
+      console.error(chalk.dim("Available agents:"));
+      for (const a of listAgents()) {
+        console.error(chalk.dim(`  ${a.name.padEnd(12)} ${a.description || ""}`));
+      }
+      process.exit(1);
+    }
+    const request = process.argv.slice(agentFlagIdx + 2).join(" ").trim() || ".";
+
+    // Need provider key
+    let def;
+    try {
+      def = getAgent(agentName);
+    } catch (err) {
+      console.error(chalk.red(`❌ ${err.message}`));
+      process.exit(1);
+    }
+    const providerName = def.provider || config.provider;
+    const { envVar } = getProviderApiKeySpec(providerName);
+    if (!process.env[envVar]) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      await setupApiKey(rl, providerName);
+      rl.close();
+    }
+
+    try {
+      await runOneShotAgent(agentName, request);
+    } finally {
+      await shutdownMcp().catch(() => {});
+    }
+    process.exit(0);
+  }
+
   const { envVar } = getProviderApiKeySpec(config.provider);
   const forceTui = process.argv.includes("--tui");
   const forceReadline =

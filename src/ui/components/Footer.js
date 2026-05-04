@@ -1,5 +1,4 @@
 import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import { h } from "../h.js";
 
 function formatElapsed(ms) {
@@ -20,13 +19,28 @@ function statusLabel(status) {
   return "";
 }
 
-export function Footer({ status, message, elapsedMs = 0, canCancel = false, toast = null, model = "", cost = 0 }) {
+function renderHints(status) {
+  if (status === "awaiting_edit") {
+    return "Enter=approve  Esc=reject  E=edit manually";
+  }
+  if (status === "awaiting_confirm") {
+    return "Enter=approve  Esc=reject";
+  }
+  // idle
+  return "Enter=send  /help=commands  Ctrl+C=exit";
+}
+
+export function Footer({ status, message, elapsedMs = 0, toast = null, model = "", cost = 0 }) {
   const isWorking = status === "thinking" || status === "writing" || status === "tool_running";
   const elapsedStr = isWorking ? formatElapsed(elapsedMs) : "";
   const costStr = `$${Number(cost || 0).toFixed(4)}`;
 
   if (toast) {
-    return h(Box, { paddingX: 1, marginBottom: 1 }, h(Text, { color: toast.color || "cyan", bold: true }, `★ ${toast.text}`));
+    return h(
+      Box,
+      { paddingX: 1, marginBottom: 1 },
+      h(Text, { color: toast.color || "cyan", bold: true }, `★ ${toast.text}`)
+    );
   }
 
   return h(
@@ -36,10 +50,10 @@ export function Footer({ status, message, elapsedMs = 0, canCancel = false, toas
     h(
       Box,
       {},
-      h(Text, { color: "cyan", bold: true }, model),
-      h(Text, { color: "gray" }, ` [${costStr}]`)
+      model ? h(Text, { color: "cyan", bold: true }, model) : null,
+      model ? h(Text, { color: "gray" }, ` [${costStr}]`) : null
     ),
-    // Right: status indicator
+    // Right: status indicator OR hints
     isWorking
       ? h(
           Box,
@@ -49,6 +63,6 @@ export function Footer({ status, message, elapsedMs = 0, canCancel = false, toas
         )
       : message
         ? h(Text, { color: "gray" }, message)
-        : h(Text, { color: "gray" }, "PageUp/Dn: scroll  Ctrl+C: exit")
+        : h(Text, { color: "gray" }, renderHints(status))
   );
 }

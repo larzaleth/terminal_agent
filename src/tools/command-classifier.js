@@ -29,6 +29,7 @@ const AUTO_ALLOWED = new Set([
   "git", "npm", "yarn", "pnpm", "pip", "pip3",
   "jest", "vitest", "pytest", "tsc", "eslint", "prettier", "ruff",
   "rg", "grep", "fgrep", "egrep", "diff", "sort", "uniq",
+  "powershell", "pwsh", "Get-Content", "Select-String", "Get-ChildItem", "Get-Item", "Test-Path"
 ]);
 
 const FORCE_CONFIRM_COMMANDS = new Set([
@@ -56,9 +57,11 @@ export function classifyCommand(cmd) {
     }
   }
 
-  // Redirection or piping — play it safe, always confirm.
-  if (/[|;&]|&&|\|\|/.test(cmd) || />\s*\/dev\//.test(cmd)) {
-    return { verdict: "confirm", reason: "Contains pipe/redirect/chain" };
+  // Redirection or piping — play it safe, but allow safe filters/selectors for PowerShell/Unix reads
+  const safeFilters = /\|\s*(Select-Object|Select-String|Where-Object|Expand-Property|Out-String|grep|head|tail|wc|sort|uniq|Skip|First|Last)/i;
+  const hasPipeOrChain = /[;&]|&&|\|\|/.test(cmd) || (cmd.includes("|") && !safeFilters.test(cmd));
+  if (hasPipeOrChain || />\s*\/dev\//.test(cmd)) {
+    return { verdict: "confirm", reason: "Contains potentially unsafe pipe/redirect/chain" };
   }
 
   const tokens = cmd.trim().split(/\s+/);

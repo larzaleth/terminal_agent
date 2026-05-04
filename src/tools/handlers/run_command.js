@@ -16,8 +16,6 @@ export default async function ({ cmd }) {
     if (!ok) {
       return "🚫 Cancelled: User denied permission to run command.";
     }
-  } else {
-
   }
 
   return runWithSpawn(cmd);
