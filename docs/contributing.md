@@ -109,7 +109,7 @@ Examples:
 feat(providers): add Groq support
 fix(mcp): handle transport disconnect mid-call
 docs(rag): clarify chunk overlap tuning
-refactor(tools): extract diff preview into separate module
+refactor(tools): simplify edit statistics module
 perf(semantic): pre-normalize vectors for O(n) search
 test(utils): cover Windows absolute path edge cases
 ```
