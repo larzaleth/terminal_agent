@@ -20,8 +20,6 @@ export default async function ({ path: filePath, target, replacement }) {
     }
 
     const content = await fs.readFile(filePath, "utf-8");
-
-    // P0: Check for multiple occurrences
     const occurrences = content.split(target).length - 1;
     if (occurrences === 0) {
       return `❌ Error: Target string not found in '${filePath}'.\n💡 Tip: Use read_file first to verify the exact content including whitespace.`;
@@ -39,7 +37,7 @@ export default async function ({ path: filePath, target, replacement }) {
       cfg.autoApprove ||
       process.env[DIFF_AUTO_APPROVE_ENV] === "1" ||
       !process.stdin.isTTY ||
-      (added + removed <= 50); // Auto-allow medium-large fixes (threshold: 50 lines)
+      (added + removed <= 50);
     if (!autoApprove) {
       const { decision } = await getPrompter().editApproval({
         filePath,
